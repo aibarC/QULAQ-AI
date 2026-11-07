@@ -12,6 +12,7 @@
 
 - [WORKFLOW.md](WORKFLOW.md) — основной процесс, роли, интерфейс, оценки и апелляции.
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) — параллельный план разработки для двух участников.
+- [TEAMMATE_UI_BRIEF.md](TEAMMATE_UI_BRIEF.md) — подробное задание напарнику на интерфейс, реальные диалоги и подключение результатов.
 - [OPTIONAL_FEATURES.md](OPTIONAL_FEATURES.md) — Auto Improve AI после готовности основы.
 
 Упоминания встреч, live STT, PRODUCT.md, DECISIONS.md, HANDOFF.md и docs/LIVE_STT_PLAN.md в исходном AGENTS.md относятся к прежнему Qulaq. Эти файлы сюда не переносились; такие ссылки не означают перенос его продуктовых требований в QULAQ2. Актуальные указания пользователя и задача CQA имеют приоритет.
