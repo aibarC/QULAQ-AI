@@ -56,8 +56,16 @@ function initialWorkspace(): Workspace {
     appeals: [],
   };
 }
+class EvaluationDisabledError extends Error {}
 async function readResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
+    if (response.status === 503) {
+      const error = await response.json().catch(() => null);
+      if (error?.code === "EVALUATION_DISABLED")
+        throw new EvaluationDisabledError(
+          "Сервер подключён. Вызовы модели отключены: анализ станет доступен после отдельного разрешения на тест.",
+        );
+    }
     if (response.status === 401 || response.status === 403)
       throw new Error(
         "Нет доступа к серверу. Проверьте подключение и права доступа.",
@@ -192,6 +200,9 @@ export function createLocalAdapter(
   }
   return {
     mode: "local",
+    uploadDataset: async () => {
+      throw new Error("Для сохранения файла подключите локальный сервер.");
+    },
     load: () =>
       serialize(async () => {
         await ensureLoaded();
@@ -384,6 +395,10 @@ export function createApiAdapter(
   };
   return {
     mode: "api",
+    uploadDataset: (dataset) => {
+      parseDataset(dataset, "UPLOAD");
+      return request("/datasets/upload", dataset);
+    },
     load: () => request("/workspace"),
     importDataset: (groupId) => {
       if (!/^[\w-]{1,100}$/.test(groupId.trim()))
@@ -408,12 +423,16 @@ export function createApiAdapter(
         if (
           workspace.conversations.find((row) => row.id === recordId)?.status !==
           "evaluating"
-        ) return;
+        )
+          return;
         // The contract has a conversation status, not a per-run status. Only
         // its latest matching run observed in progress may reuse an existing ID.
-        const run = workspace.evaluations.filter(
-          (item) => item.recordId === recordId && item.checklist.id === checklistId,
-        ).at(-1);
+        const run = workspace.evaluations
+          .filter(
+            (item) =>
+              item.recordId === recordId && item.checklist.id === checklistId,
+          )
+          .at(-1);
         if (run && baselineRuns.has(run.id)) knownPendingRuns.add(run.id);
       };
       observePendingRun(latest!);
@@ -454,12 +473,12 @@ export function createApiAdapter(
             workspace,
           );
         const confirmedRun = workspace.evaluations.some(
-          (run) => run.recordId === recordId && run.checklist.id === checklistId && (
-            !baselineRuns.has(run.id) || (
-              knownPendingRuns.has(run.id) &&
-              baselineRuns.get(run.id) !== JSON.stringify(run)
-            )
-          ),
+          (run) =>
+            run.recordId === recordId &&
+            run.checklist.id === checklistId &&
+            (!baselineRuns.has(run.id) ||
+              (knownPendingRuns.has(run.id) &&
+                baselineRuns.get(run.id) !== JSON.stringify(run))),
         );
         if (!confirmedRun)
           throw new AdapterStateError(
@@ -469,6 +488,8 @@ export function createApiAdapter(
         return workspace;
       } catch (error) {
         if (error instanceof AdapterStateError) throw error;
+        if (error instanceof EvaluationDisabledError)
+          throw new AdapterStateError(error.message, latest!);
         if (!initialResponseConfirmed) {
           // A failed response does not prove that the server rejected the launch.
           // Reconcile by reading once. The POST must never be retried automatically.
@@ -479,12 +500,14 @@ export function createApiAdapter(
               reconciled,
             );
           } catch (reconcileError) {
-            if (reconcileError instanceof AdapterStateError) throw reconcileError;
-            if (latest) throw new AdapterStateError(
-              "Результат запуска неизвестен: не удалось обновить данные с сервера. Сначала восстановите соединение и обновите данные; не запускайте оценку повторно.",
-              latest,
-              true,
-            );
+            if (reconcileError instanceof AdapterStateError)
+              throw reconcileError;
+            if (latest)
+              throw new AdapterStateError(
+                "Результат запуска неизвестен: не удалось обновить данные с сервера. Сначала восстановите соединение и обновите данные; не запускайте оценку повторно.",
+                latest,
+                true,
+              );
             throw reconcileError;
           }
         }

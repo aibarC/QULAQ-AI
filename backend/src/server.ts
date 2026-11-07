@@ -1,0 +1,578 @@
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+  type Server,
+} from "node:http";
+import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  parseDataset,
+  validAnswer,
+  validateChecklist,
+  validateChecklistDraft,
+} from "../../frontend/src/lib/validation.ts";
+import type {
+  Checklist,
+  Conversation,
+  CriterionResult,
+  Evaluation,
+  Workspace,
+} from "../../frontend/src/lib/types.ts";
+import type { WorkspaceStore } from "./store.ts";
+
+export interface AppOptions {
+  store: WorkspaceStore;
+  initialChecklist: Checklist;
+  evaluate(input: {
+    conversation: Conversation;
+    checklist: Checklist;
+    signal: AbortSignal;
+  }): Promise<{
+    results: CriterionResult[];
+    total: number | null;
+    grossViolation: boolean;
+  }>;
+  recalculate(evaluation: Evaluation): Evaluation;
+  allowEvaluation?: boolean;
+  datasetPath: string;
+}
+
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+const BODY_LIMIT = 5 * 1024 * 1024;
+const loopbackHost = /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/;
+
+function checkLocalRequest(request: IncomingMessage) {
+  const remote = request.socket.remoteAddress;
+  if (
+    !remote ||
+    !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(remote) ||
+    !loopbackHost.test(request.headers.host || "")
+  ) {
+    throw new HttpError(
+      403,
+      "LOCAL_ONLY",
+      "Доступ разрешён только с этого устройства.",
+    );
+  }
+  const origin = request.headers.origin;
+  if (origin) {
+    let allowed = false;
+    try {
+      const url = new URL(origin);
+      allowed =
+        url.protocol === "http:" &&
+        loopbackHost.test(url.host) &&
+        url.origin === origin;
+    } catch {
+      /* Reject malformed origins. */
+    }
+    if (!allowed)
+      throw new HttpError(
+        403,
+        "ORIGIN_DENIED",
+        "Источник запроса не разрешён.",
+      );
+  }
+}
+
+function send(response: ServerResponse, status: number, body: unknown) {
+  response.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+  });
+  response.end(JSON.stringify(body));
+}
+
+async function body(
+  request: IncomingMessage,
+): Promise<Record<string, unknown>> {
+  if (
+    !/^application\/json(?:\s*;.*)?$/i.test(
+      request.headers["content-type"] || "",
+    ) ||
+    (request.headers["content-encoding"] &&
+      request.headers["content-encoding"] !== "identity")
+  ) {
+    request.resume();
+    throw new HttpError(
+      415,
+      "JSON_REQUIRED",
+      "Отправьте данные в формате JSON.",
+    );
+  }
+  if (Number(request.headers["content-length"]) > BODY_LIMIT) {
+    request.resume();
+    throw new HttpError(
+      413,
+      "BODY_TOO_LARGE",
+      "Максимальный размер запроса — 5 МБ.",
+    );
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const value of request.iterator({ destroyOnReturn: false })) {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    size += chunk.length;
+    if (size > BODY_LIMIT) {
+      request.resume();
+      throw new HttpError(
+        413,
+        "BODY_TOO_LARGE",
+        "Максимальный размер запроса — 5 МБ.",
+      );
+    }
+    chunks.push(chunk);
+  }
+  try {
+    const value: unknown = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error();
+    return value as Record<string, unknown>;
+  } catch {
+    throw new HttpError(422, "INVALID_JSON", "Некорректный JSON запроса.");
+  }
+}
+
+function field(
+  input: Record<string, unknown>,
+  key: string,
+  maximum = 300,
+): string {
+  const value = input[key];
+  if (typeof value !== "string" || !value.trim() || value.length > maximum) {
+    throw new HttpError(
+      422,
+      "INVALID_INPUT",
+      "Проверьте обязательные поля запроса.",
+    );
+  }
+  return value.trim();
+}
+
+function mergeConversations(workspace: Workspace, records: Conversation[]) {
+  for (const record of records) {
+    const existing = workspace.conversations.find(
+      (item) => item.id === record.id,
+    );
+    if (!existing) {
+      workspace.conversations.push(record);
+      continue;
+    }
+    const content = (item: Conversation) =>
+      JSON.stringify({
+        externalId: item.externalId,
+        groupId: item.groupId,
+        channel: item.channel,
+        language: item.language,
+        messages: item.messages.map((message) => [
+          message.id,
+          message.timestamp,
+          message.speaker,
+          message.text,
+        ]),
+        audioUrl: item.audioUrl,
+      });
+    if (content(existing) !== content(record))
+      throw new HttpError(
+        409,
+        "RECORD_CONFLICT",
+        "Диалог с этим ID уже содержит другой текст. Используйте новый ID.",
+      );
+    // Exact repeats preserve saved scores, appeals and current job status.
+  }
+}
+
+/** Local MVP only. Provider access is explicitly injected and disabled by default. */
+export function createApp(options: AppOptions): Server {
+  validateChecklist(options.initialChecklist);
+  const { store } = options;
+  type Job = {
+    id: string;
+    conversation: Conversation;
+    checklist: Checklist;
+    controller: AbortController;
+  };
+  const jobs = new Map<string, Job>();
+
+  async function execute(job: Job) {
+    try {
+      if (job.controller.signal.aborted) throw new Error("Cancelled");
+      const outcome = await options.evaluate({
+        conversation: structuredClone(job.conversation),
+        checklist: structuredClone(job.checklist),
+        signal: job.controller.signal,
+      });
+      if (job.controller.signal.aborted) throw new Error("Cancelled");
+      const evaluation: Evaluation = {
+        id: job.id,
+        recordId: job.conversation.id,
+        createdAt: new Date().toISOString(),
+        checklist: structuredClone(job.checklist),
+        demo: false,
+        results: outcome.results.map((result) => ({
+          ...result,
+          originalAnswer: result.answer,
+          override: undefined,
+        })),
+        total: outcome.total,
+        originalTotal: outcome.total,
+        grossViolation: outcome.grossViolation,
+      };
+      await store.mutate((draft) => {
+        const record = draft.conversations.find(
+          (item) => item.id === job.conversation.id,
+        );
+        if (!record || jobs.get(record.id) !== job)
+          throw new Error("Unknown job");
+        draft.evaluations.push(evaluation);
+        record.status = "evaluated";
+      });
+    } catch {
+      // Never expose provider messages, headers, prompts or raw output.
+      await store
+        .mutate((draft) => {
+          const record = draft.conversations.find(
+            (item) => item.id === job.conversation.id,
+          );
+          if (record && jobs.get(record.id) === job) record.status = "error";
+        })
+        .catch(() => undefined);
+    } finally {
+      if (jobs.get(job.conversation.id) === job)
+        jobs.delete(job.conversation.id);
+    }
+  }
+
+  const server = createServer(async (request, response) => {
+    try {
+      checkLocalRequest(request);
+      const path = new URL(request.url || "/", "http://localhost").pathname;
+      if (request.method === "GET" && path === "/api/workspace")
+        return send(response, 200, store.snapshot());
+      if (request.method !== "POST")
+        throw new HttpError(404, "NOT_FOUND", "Маршрут не найден.");
+      const input = await body(request);
+
+      if (path === "/api/datasets/import" || path === "/api/datasets/upload") {
+        let records: Conversation[];
+        if (path.endsWith("/import")) {
+          if (field(input, "groupId") !== "DEV")
+            throw new HttpError(
+              422,
+              "UNKNOWN_DATASET",
+              "Локально доступен набор DEV.",
+            );
+          let source: unknown;
+          try {
+            source = JSON.parse(await readFile(options.datasetPath, "utf8"));
+          } catch {
+            throw new HttpError(
+              503,
+              "DATASET_UNAVAILABLE",
+              "Локальный набор DEV недоступен.",
+            );
+          }
+          try {
+            records = parseDataset(source, "DEV");
+          } catch {
+            throw new HttpError(
+              422,
+              "INVALID_DATASET",
+              "Проверьте формат набора DEV.",
+            );
+          }
+        } else {
+          try {
+            records = parseDataset(input, "UPLOAD");
+          } catch {
+            throw new HttpError(
+              422,
+              "INVALID_DATASET",
+              "Проверьте формат набора UPLOAD.",
+            );
+          }
+          if (
+            !records.length ||
+            records.some(
+              (record) =>
+                !record.messages.some((message) => message.text.trim()),
+            )
+          )
+            throw new HttpError(
+              422,
+              "EMPTY_TRANSCRIPT",
+              "Загрузите непустые транскрипты.",
+            );
+        }
+        return send(
+          response,
+          200,
+          await store.mutate((draft) => mergeConversations(draft, records)),
+        );
+      }
+
+      if (path === "/api/checklists") {
+        let checklist: Checklist;
+        try {
+          checklist = validateChecklistDraft(input);
+        } catch {
+          throw new HttpError(
+            422,
+            "INVALID_CHECKLIST",
+            "Проверьте правила, шкалы и веса чек-листа.",
+          );
+        }
+        const workspace = await store.mutate((draft) => {
+          const existing = draft.checklists.find(
+            (item) => item.id === checklist.id,
+          );
+          if (existing && checklist.version !== existing.version)
+            throw new HttpError(
+              409,
+              "CHECKLIST_CONFLICT",
+              "Чек-лист уже изменён. Обновите его перед сохранением.",
+            );
+          if (!existing && checklist.version > 1)
+            throw new HttpError(
+              422,
+              "INVALID_VERSION",
+              "Новый чек-лист должен начинаться с первой версии.",
+            );
+          const next = {
+            ...checklist,
+            version: existing ? existing.version + 1 : 1,
+          };
+          if (existing)
+            draft.checklists[draft.checklists.indexOf(existing)] = next;
+          else draft.checklists.push(next);
+        });
+        return send(response, 200, workspace);
+      }
+
+      if (path === "/api/evaluations") {
+        if (!options.allowEvaluation)
+          throw new HttpError(
+            503,
+            "EVALUATION_DISABLED",
+            "Вызовы модели отключены. Требуется отдельное разрешение на тест.",
+          );
+        const recordId = field(input, "recordId"),
+          checklistId = field(input, "checklistId");
+        let created: Job | undefined;
+        const workspace = await store.mutate((draft) => {
+          const record = draft.conversations.find(
+            (item) => item.id === recordId,
+          );
+          const checklist = draft.checklists.find(
+            (item) => item.id === checklistId,
+          );
+          if (!record || !checklist)
+            throw new HttpError(
+              404,
+              "NOT_FOUND",
+              "Диалог или чек-лист не найден.",
+            );
+          if (record.status === "evaluating") {
+            const active = jobs.get(recordId);
+            if (active && active.checklist.id !== checklistId)
+              throw new HttpError(
+                409,
+                "ALREADY_EVALUATING",
+                "Этот диалог уже оценивается по другому чек-листу.",
+              );
+            return;
+          }
+          if (!record.messages.some((message) => message.text.trim()))
+            throw new HttpError(422, "EMPTY_TRANSCRIPT", "Транскрипт пуст.");
+          created = {
+            id: `evaluation:${randomUUID()}`,
+            conversation: structuredClone(record),
+            checklist: structuredClone(checklist),
+            controller: new AbortController(),
+          };
+          record.status = "evaluating";
+        });
+        if (created) jobs.set(recordId, created);
+        send(response, 202, workspace);
+        if (created) {
+          const job = created;
+          setImmediate(() => {
+            void execute(job);
+          });
+        }
+        return;
+      }
+
+      if (path === "/api/appeals") {
+        const evaluationId = field(input, "evaluationId"),
+          criterionId = field(input, "criterionId"),
+          comment = field(input, "comment", 4000);
+        return send(
+          response,
+          200,
+          await store.mutate((draft) => {
+            const evaluation = draft.evaluations.find(
+              (item) => item.id === evaluationId,
+            );
+            if (
+              !evaluation?.results.some(
+                (result) => result.criterionId === criterionId,
+              )
+            )
+              throw new HttpError(
+                404,
+                "NOT_FOUND",
+                "Результат критерия не найден.",
+              );
+            if (
+              draft.appeals.some(
+                (item) =>
+                  item.evaluationId === evaluationId &&
+                  item.criterionId === criterionId &&
+                  item.status === "pending",
+              )
+            )
+              return;
+            draft.appeals.push({
+              id: `appeal:${randomUUID()}`,
+              recordId: evaluation.recordId,
+              evaluationId,
+              criterionId,
+              comment,
+              createdAt: new Date().toISOString(),
+              status: "pending",
+            });
+          }),
+        );
+      }
+
+      const decisionPath = /^\/api\/appeals\/([^/]+)\/decision$/.exec(path);
+      if (decisionPath) {
+        let appealId: string;
+        try {
+          appealId = decodeURIComponent(decisionPath[1]);
+        } catch {
+          throw new HttpError(
+            422,
+            "INVALID_INPUT",
+            "Некорректный ID обращения.",
+          );
+        }
+        const reason = field(input, "reason", 4000),
+          action = input.action;
+        if (action !== "confirm" && action !== "change")
+          throw new HttpError(
+            422,
+            "INVALID_DECISION",
+            "Выберите действие проверяющего.",
+          );
+        return send(
+          response,
+          200,
+          await store.mutate((draft) => {
+            const appeal = draft.appeals.find((item) => item.id === appealId);
+            if (!appeal)
+              throw new HttpError(404, "NOT_FOUND", "Обращение не найдено.");
+            if (appeal.status !== "pending")
+              throw new HttpError(
+                409,
+                "ALREADY_RESOLVED",
+                "Обращение уже рассмотрено.",
+              );
+            const evaluation = draft.evaluations.find(
+              (item) => item.id === appeal.evaluationId,
+            )!;
+            const criterion = evaluation.checklist.criteria.find(
+              (item) => item.id === appeal.criterionId,
+            )!;
+            const result = evaluation.results.find(
+              (item) => item.criterionId === appeal.criterionId,
+            )!;
+            const answer = action === "confirm" ? result.answer : input.answer;
+            if (
+              !(
+                answer === null ||
+                typeof answer === "number" ||
+                typeof answer === "boolean"
+              ) ||
+              !validAnswer(criterion, answer)
+            )
+              throw new HttpError(
+                422,
+                "INVALID_ANSWER",
+                "Выберите допустимый ответ по исходному чек-листу.",
+              );
+            appeal.status = "resolved";
+            appeal.decision = {
+              action,
+              answer,
+              reason,
+              createdAt: new Date().toISOString(),
+            };
+            if (action === "change") {
+              result.answer = answer;
+              result.override = { answer, reason, appealId };
+              if (answer === null) result.naReason = reason;
+              else delete result.naReason;
+              const revised = options.recalculate(structuredClone(evaluation));
+              if (
+                revised.id !== evaluation.id ||
+                revised.recordId !== evaluation.recordId ||
+                revised.originalTotal !== evaluation.originalTotal ||
+                JSON.stringify(revised.checklist) !==
+                  JSON.stringify(evaluation.checklist) ||
+                revised.results.some(
+                  (item) =>
+                    item.originalAnswer !==
+                    evaluation.results.find(
+                      (original) => original.criterionId === item.criterionId,
+                    )?.originalAnswer,
+                )
+              )
+                throw new Error("Invalid recalculation");
+              draft.evaluations[draft.evaluations.indexOf(evaluation)] =
+                revised;
+            }
+          }),
+        );
+      }
+      throw new HttpError(404, "NOT_FOUND", "Маршрут не найден.");
+    } catch (error) {
+      if (!response.headersSent && !response.destroyed) {
+        if (error instanceof HttpError)
+          send(response, error.status, {
+            code: error.code,
+            message: error.message,
+          });
+        else
+          send(response, 500, {
+            code: "INTERNAL_ERROR",
+            message:
+              "Не удалось сохранить действие. Обновите данные и попробуйте снова.",
+          });
+      }
+    }
+  });
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 10_000;
+  server.maxRequestsPerSocket = 100;
+  server.on("close", () => {
+    for (const job of jobs.values()) job.controller.abort();
+  });
+  return server;
+}

@@ -921,7 +921,20 @@ export default function App() {
                       }}
                     />
                   )}
-                  <UploadTranscript />
+                  <UploadTranscript
+                    onImport={
+                      adapter.mode === "api"
+                        ? async (dataset, firstId) => {
+                            await mutate(
+                              "upload",
+                              () => adapter.uploadDataset(dataset),
+                              "Диалоги сохранены на сервере",
+                            );
+                            go({ page: "dialog", id: firstId });
+                          }
+                        : undefined
+                    }
+                  />
                   <div className="dataset-bar panel">
                     <div className="dataset-label">
                       <span className="dataset-icon">

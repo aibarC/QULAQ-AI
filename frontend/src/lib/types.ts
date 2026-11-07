@@ -94,6 +94,7 @@ export interface WorkspaceAdapter {
   readonly mode: "local" | "api";
   load(): Promise<Workspace>;
   importDataset(groupId: string): Promise<Workspace>;
+  uploadDataset(dataset: unknown): Promise<Workspace>;
   saveChecklist(checklist: Checklist): Promise<Workspace>;
   evaluate(recordId: string, checklistId: string): Promise<Workspace>;
   createAppeal(

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { Conversation } from "../lib/types";
 import { parseDataset } from "../lib/validation";
+import { makeUploadDataset } from "../lib/upload-dataset";
 import "./upload-transcript.css";
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -54,7 +55,11 @@ function readJsonDataset(text: string): Conversation[] {
   return conversations;
 }
 
-export default function UploadTranscript() {
+export default function UploadTranscript({
+  onImport,
+}: {
+  onImport?: (dataset: unknown, firstId: string) => Promise<void>;
+}) {
   const componentId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
@@ -62,6 +67,7 @@ export default function UploadTranscript() {
   const [file, setFile] = useState<LocalFile | null>(null);
   const [language, setLanguage] = useState<Conversation["language"]>("RU");
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -76,7 +82,7 @@ export default function UploadTranscript() {
   );
 
   async function loadFile(candidate: File) {
-    if (busy) return;
+    if (busy || sending) return;
     setError("");
     const extension = candidate.name.split(".").at(-1)?.toLowerCase();
     if (extension !== "txt" && extension !== "json") {
@@ -169,6 +175,24 @@ export default function UploadTranscript() {
     if (inputRef.current) inputRef.current.value = "";
   }
 
+  async function importFile() {
+    if (!file || busy || sending || !onImport) return;
+    setSending(true);
+    setError("");
+    try {
+      const { dataset, firstId } = await makeUploadDataset(file, language);
+      await onImport(dataset, firstId);
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Не удалось загрузить диалог на сервер.",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
   const selected =
     file?.kind === "json"
       ? file.conversations.find(
@@ -186,7 +210,7 @@ export default function UploadTranscript() {
     <section
       className="upload-transcript"
       aria-label="Загрузка транскрипта"
-      aria-busy={busy}
+      aria-busy={busy || sending}
     >
       <div className="upload-transcript-heading">
         <div className="upload-transcript-symbol" aria-hidden="true">
@@ -204,7 +228,8 @@ export default function UploadTranscript() {
       <div
         className={`upload-dropzone ${dragging ? "is-dragging" : ""} ${busy ? "is-reading" : ""}`}
         onDragEnter={(event) => {
-          if (!event.dataTransfer.types.includes("Files") || busy) return;
+          if (!event.dataTransfer.types.includes("Files") || busy || sending)
+            return;
           event.preventDefault();
           dragDepth.current++;
           setDragging(true);
@@ -222,7 +247,7 @@ export default function UploadTranscript() {
           event.preventDefault();
           dragDepth.current = 0;
           setDragging(false);
-          if (busy) return;
+          if (busy || sending) return;
           if (event.dataTransfer.files.length !== 1) {
             setError("Выберите один файл для просмотра.");
             return;
@@ -251,7 +276,7 @@ export default function UploadTranscript() {
                 id={`${componentId}-language`}
                 className="select"
                 value={language}
-                disabled={busy}
+                disabled={busy || sending}
                 onChange={(event) =>
                   setLanguage(event.target.value as Conversation["language"])
                 }
@@ -269,7 +294,7 @@ export default function UploadTranscript() {
             accept=".txt,.json,text/plain,application/json"
             aria-label="Файл транскрипта"
             tabIndex={-1}
-            disabled={busy}
+            disabled={busy || sending}
             onChange={(event) => {
               const candidate = event.target.files?.[0];
               event.target.value = "";
@@ -279,7 +304,7 @@ export default function UploadTranscript() {
           <button
             className="button secondary"
             type="button"
-            disabled={busy}
+            disabled={busy || sending}
             onClick={() => inputRef.current?.click()}
           >
             {busy ? (
@@ -332,6 +357,7 @@ export default function UploadTranscript() {
             <button
               className="button ghost small upload-remove"
               type="button"
+              disabled={sending}
               onClick={resetFile}
               aria-label="Удалить файл"
             >
@@ -457,21 +483,28 @@ export default function UploadTranscript() {
       <div className="upload-processing-note">
         <div>
           <p id={`${componentId}-analysis-note`}>
-            Анализ появится после подключения backend. Сейчас доступен только
-            просмотр файла.
+            {onImport
+              ? "Сохраните диалоги на локальном сервере и откройте карточку. Анализ запускается отдельно."
+              : "Анализ появится после подключения backend. Сейчас доступен только просмотр файла."}
           </p>
           <span>
-            Файл не отправляется на сервер и исчезнет после перезагрузки
-            страницы.
+            {onImport
+              ? "Кнопка ниже отправит транскрипт вашему серверу. Для TXT нужны подписи «Клиент:» и «Оператор:». Вызов модели при загрузке не выполняется."
+              : "Файл не отправляется на сервер и исчезнет после перезагрузки страницы."}
           </span>
         </div>
         <button
           className="button primary small"
           type="button"
-          disabled
+          disabled={!onImport || !file || busy || sending}
+          onClick={() => void importFile()}
           aria-describedby={`${componentId}-analysis-note`}
         >
-          Анализировать
+          {sending
+            ? "Сохраняем…"
+            : onImport
+              ? "Открыть для анализа"
+              : "Анализировать"}
         </button>
       </div>
       <details className="upload-format-help">
