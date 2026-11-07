@@ -4,6 +4,7 @@ import { createGatewayEvaluator } from "./provider.ts";
 import { createApp } from "./server.ts";
 import { createStore } from "./store.ts";
 import { initialChecklist, recalculate } from "./scoring.ts";
+import { createLayaClassifier } from "./laya.ts";
 
 async function start() {
   const config = getRuntimeConfig();
@@ -22,12 +23,27 @@ async function start() {
     evaluations: [],
     appeals: [],
   });
+  const localClassifier = config.localLaya
+    ? createLayaClassifier({
+        pythonPath: config.layaPythonPath,
+        workerPath: config.layaWorkerPath,
+      })
+    : undefined;
   const app = createApp({
     store,
     initialChecklist,
     datasetPath: config.datasetPath,
     allowEvaluation: config.allowEvaluation,
     recalculate,
+    classifyReason: localClassifier
+      ? (conversation, evaluation) =>
+          localClassifier(
+            conversation,
+            evaluation.checklist,
+            evaluation.results,
+            evaluation.contactReason,
+          )
+      : undefined,
     evaluate: createGatewayEvaluator({
       enabled: config.allowEvaluation,
       baseUrl: config.allowEvaluation
@@ -37,6 +53,7 @@ async function start() {
       model: config.model,
       maxTokens: config.maxTokens,
       quotaPath: config.quotaPath,
+      localClassifier,
     }),
   });
   app.on("error", () => {
@@ -48,7 +65,7 @@ async function start() {
     console.log(
       config.allowEvaluation
         ? "Разрешён максимум один запрос модели; повтор и перезапуск не восстанавливают разрешение."
-        : "Вызовы модели отключены. Файл с токеном не загружался.",
+        : "Внешние вызовы Kimi отключены. Файл с токеном не загружался.",
     );
   });
   const stop = () => {

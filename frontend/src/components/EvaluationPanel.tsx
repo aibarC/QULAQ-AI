@@ -30,6 +30,7 @@ import {
   Spinner,
 } from "./Shared";
 import "./evaluation-motion.css";
+import CoachingAdvice from "./CoachingAdvice";
 import ExportEvaluation from "./ExportEvaluation";
 
 function CriterionRules({ criterion }: { criterion: Criterion }) {
@@ -632,8 +633,20 @@ export default function EvaluationPanel(p: Props) {
                         </span>
                       )}
                       {r.evidence.map((ev, i) => (
-                        <EvidenceCard key={i} evidence={ev} onSelect={p.onEvidence} />
+                        <EvidenceCard
+                          key={i}
+                          evidence={ev}
+                          onSelect={p.onEvidence}
+                        />
                       ))}
+                      {!isPreview && (
+                        <CoachingAdvice
+                          key={`${evaluation.id}:${c.id}`}
+                          criterion={c}
+                          result={r}
+                          onEvidence={p.onEvidence}
+                        />
+                      )}
                       {!isPreview && r.override && (
                         <div className="override">
                           <CheckCheck size={17} />

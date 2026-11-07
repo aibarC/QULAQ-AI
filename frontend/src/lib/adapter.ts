@@ -65,6 +65,10 @@ async function readResponse(response: Response): Promise<unknown> {
         throw new EvaluationDisabledError(
           "Сервер подключён. Вызовы модели отключены: анализ станет доступен после отдельного разрешения на тест.",
         );
+      if (error?.code === "LOCAL_CLASSIFIER_DISABLED")
+        throw new Error(
+          "Локальная Laya не подключена. Подключите локальный классификатор на сервере и повторите действие.",
+        );
     }
     if (response.status === 401 || response.status === 403)
       throw new Error(
@@ -97,9 +101,10 @@ async function fetchWithTimeout(
   fetcher: typeof fetch,
   url: string,
   options: RequestInit = {},
+  timeoutMs = 30_000,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetcher(url, {
       ...options,
@@ -202,6 +207,11 @@ export function createLocalAdapter(
     mode: "local",
     uploadDataset: async () => {
       throw new Error("Для сохранения файла подключите локальный сервер.");
+    },
+    classifyReason: async () => {
+      throw new Error(
+        "Классификация Laya недоступна в учебном режиме. Подключите локальный сервер с Laya.",
+      );
     },
     load: () =>
       serialize(async () => {
@@ -380,7 +390,11 @@ export function createApiAdapter(
   const base = baseUrl.replace(/\/$/, "");
   if (!/^\/api(?:\/[a-zA-Z0-9_-]+)*$/.test(base))
     throw new Error("API должен использовать путь этого сайта, например /api.");
-  const request = async (path: string, data?: unknown): Promise<Workspace> => {
+  const request = async (
+    path: string,
+    data?: unknown,
+    timeoutMs = 30_000,
+  ): Promise<Workspace> => {
     const sequence = ++requestSequence;
     const response = await fetchWithTimeout(
       fetcher,
@@ -392,6 +406,7 @@ export function createApiAdapter(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(data),
           },
+      timeoutMs,
     );
     const confirmed = parseWorkspace(await readResponse(response));
     if (sequence >= latestSequence) {
@@ -402,6 +417,12 @@ export function createApiAdapter(
   };
   return {
     mode: "api",
+    classifyReason: (evaluationId) =>
+      request(
+        `/evaluations/${encodeURIComponent(evaluationId)}/classify-reason`,
+        {},
+        150_000,
+      ),
     uploadDataset: (dataset) => {
       parseDataset(dataset, "UPLOAD");
       return request("/datasets/upload", dataset);

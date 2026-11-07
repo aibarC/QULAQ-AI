@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { Checklist, Conversation } from "../../frontend/src/lib/types.ts";
 import { buildEvaluationMessages } from "./prompt.ts";
 import { scoreModelOutput } from "./scoring.ts";
+import { enrichWithLaya, type LayaClassifier } from "./laya.ts";
 
 type ProviderOptions = {
   enabled?: boolean;
@@ -13,6 +14,7 @@ type ProviderOptions = {
   fetcher?: typeof fetch;
   timeoutMs?: number;
   maxTokens?: number;
+  localClassifier?: LayaClassifier;
 };
 
 /** No warmup, model listing, retries, redirects or calls before the one-use gate. */
@@ -133,6 +135,7 @@ export function createGatewayEvaluator(options: ProviderOptions) {
     } catch {
       throw new Error("LLM_INVALID_JSON_RESPONSE");
     }
-    return scoreModelOutput(conversation, checklist, raw);
+    const outcome = scoreModelOutput(conversation, checklist, raw);
+    return options.localClassifier ? enrichWithLaya(outcome, conversation, checklist, options.localClassifier, signal) : outcome;
   };
 }

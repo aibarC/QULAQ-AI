@@ -1,13 +1,131 @@
 import { z } from "zod";
+import { CONTACT_REASON_GROUPS, type ContactReason } from "./contactReasons";
+import { isCriterionIssue } from "./coaching";
 import type {
   Answer,
   Checklist,
   Conversation,
   Criterion,
+  CriterionCoaching,
   Workspace,
 } from "./types";
 
 const id = z.string().min(1).max(300);
+export const coachingSchema = z
+  .object({
+    response: z.string().trim().min(1).max(2000).nullable(),
+    explanation: z.string().trim().min(1).max(2000),
+    needsContext: z.boolean(),
+    messageIds: z
+      .array(id)
+      .min(1)
+      .max(100)
+      .refine((ids) => new Set(ids).size === ids.length),
+  })
+  .strict()
+  .refine(
+    (value) => value.needsContext === (value.response === null),
+    "При нехватке контекста ответ должен быть null, иначе нужна конкретная реплика.",
+  );
+
+/** Validate against the immutable model answer; a reviewer may later fix the current answer. */
+export function parseCriterionCoaching(
+  input: unknown,
+  criterion: Criterion,
+  originalAnswer: Answer,
+  messageIds: ReadonlySet<string>,
+): CriterionCoaching {
+  const parsed = coachingSchema.safeParse(input);
+  if (!parsed.success || !isCriterionIssue(criterion, originalAnswer)) {
+    throw new Error("Некорректная рекомендация по критерию.");
+  }
+  if (parsed.data.messageIds.some((id) => !messageIds.has(id))) {
+    throw new Error("Рекомендация ссылается на отсутствующее сообщение.");
+  }
+  return parsed.data;
+}
+const contactCategory = z.enum(CONTACT_REASON_GROUPS.map((group) => group.id));
+const contactEvidence = z
+  .array(id)
+  .max(100)
+  .refine(
+    (ids) => new Set(ids).size === ids.length,
+    "Повторные ID в доказательстве причины обращения.",
+  );
+export const contactReasonSchema = z
+  .object({
+    taxonomyVersion: z.literal(1),
+    classifier: z
+      .object({
+        provider: z.literal("laya"),
+        model: id,
+        revision: id,
+        criterionId: id,
+        messageIds: contactEvidence.refine((ids) => ids.length > 0),
+      })
+      .strict()
+      .optional(),
+    primary: contactCategory,
+    secondary: z.array(contactCategory).max(3),
+    summary: z.string().trim().min(1).max(600),
+    reason: z.string().trim().min(1).max(2000),
+    evidenceIds: contactEvidence,
+    resolution: z
+      .object({
+        status: z.enum(["resolved", "unresolved", "unknown"]),
+        reason: z.string().trim().min(1).max(2000),
+        evidenceIds: contactEvidence,
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      new Set(value.secondary).size !== value.secondary.length ||
+      value.secondary.includes(value.primary)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Дополнительные причины должны быть уникальны и отличаться от основной.",
+      });
+    }
+    if (value.primary !== "unknown" && !value.evidenceIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Для определённой причины нужны подтверждающие реплики.",
+      });
+    }
+    if (
+      value.resolution.status !== "unknown" &&
+      !value.resolution.evidenceIds.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Для определённого исхода нужны подтверждающие реплики.",
+      });
+    }
+  });
+
+/** Validate model/API metadata against the exact conversation it describes. */
+export function parseContactReason(
+  input: unknown,
+  messageIds: ReadonlySet<string>,
+): ContactReason {
+  const parsed = contactReasonSchema.safeParse(input);
+  if (!parsed.success)
+    throw new Error("Некорректная классификация причины обращения.");
+  if (
+    [
+      ...parsed.data.evidenceIds,
+      ...parsed.data.resolution.evidenceIds,
+      ...(parsed.data.classifier?.messageIds ?? []),
+    ].some((id) => !messageIds.has(id))
+  ) {
+    throw new Error("Причина обращения ссылается на отсутствующее сообщение.");
+  }
+  return parsed.data;
+}
 const text = z.string().max(200_000);
 const answer = z.union([z.number().finite(), z.boolean(), z.null()]);
 const audio = z
@@ -129,6 +247,7 @@ const resultSchema = z.object({
   explanation: text,
   evidence: z.array(evidenceSchema).max(1000),
   naReason: text.optional(),
+  coaching: coachingSchema.optional(),
   override: z
     .object({
       answer,
@@ -150,6 +269,22 @@ const evaluationSchema = z.object({
   originalTotal: z.number().min(0).max(100).nullable(),
   grossViolation: z.boolean(),
   demo: z.boolean(),
+  contactReason: contactReasonSchema.optional(),
+  classificationError: z
+    .object({
+      provider: z.literal("laya"),
+      code: z.enum([
+        "missing_fragment",
+        "invalid_fragment",
+        "unavailable",
+        "timeout",
+        "invalid_output",
+        "failed",
+      ]),
+      message: z.string().min(1).max(1000),
+    })
+    .strict()
+    .optional(),
 });
 const appealSchema = z.object({
   id,
@@ -240,6 +375,15 @@ export function parseWorkspace(input: unknown): Workspace {
     const messageIds = new Set(
       conversation.messages.map((message) => message.id),
     );
+    if (evaluation.contactReason)
+      parseContactReason(evaluation.contactReason, messageIds);
+    if (
+      evaluation.contactReason?.classifier &&
+      !evaluation.checklist.criteria.some(
+        (c) => c.id === evaluation.contactReason!.classifier!.criterionId,
+      )
+    )
+      throw new Error("Неизвестный критерий фрагмента классификации.");
     if (
       evaluation.results.length !== evaluation.checklist.criteria.length ||
       new Set(evaluation.results.map((r) => r.criterionId)).size !==
@@ -264,6 +408,13 @@ export function parseWorkspace(input: unknown): Workspace {
         throw new Error("Доказательство ссылается на отсутствующее сообщение.");
       if (result.answer === null && !result.naReason?.trim())
         throw new Error("Для N/A необходима причина неприменимости.");
+      if (result.coaching)
+        parseCriterionCoaching(
+          result.coaching,
+          criterion,
+          result.originalAnswer,
+          messageIds,
+        );
     }
   }
   for (const appeal of state.appeals) {

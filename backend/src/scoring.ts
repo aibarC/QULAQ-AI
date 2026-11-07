@@ -1,12 +1,14 @@
 import type {
   Answer,
   Checklist,
+  ContactReason,
   Conversation,
   Criterion,
   CriterionResult,
   Evaluation,
   Evidence,
 } from "../../frontend/src/lib/types.ts";
+import { parseContactReason, parseCriterionCoaching } from "../../frontend/src/lib/validation.ts";
 
 /** Official CQA checklist, not the synthetic frontend teaching fixture. */
 export const initialChecklist: Checklist = {
@@ -364,6 +366,7 @@ export function scoreModelOutput(
   results: CriterionResult[];
   total: number | null;
   grossViolation: boolean;
+  contactReason?: ContactReason;
 } {
   checkChecklist(checklist);
   if (
@@ -389,7 +392,7 @@ export function scoreModelOutput(
   }
   if (
     !object(parsed) ||
-    !exactKeys(parsed, ["results"]) ||
+    !(exactKeys(parsed, ["results"]) || exactKeys(parsed, ["results", "contact_reason"])) ||
     !Array.isArray(parsed.results) ||
     parsed.results.length !== checklist.criteria.length
   ) {
@@ -398,6 +401,15 @@ export function scoreModelOutput(
     );
   }
   const byId = new Map<string, Record<string, unknown>>();
+  let contactReason: ContactReason | undefined;
+  if (Object.hasOwn(parsed, "contact_reason")) {
+    if (object(parsed.contact_reason) && Object.hasOwn(parsed.contact_reason, "classifier")) throw new ModelOutputError("происхождение классификации задаётся только сервером.");
+    try {
+      contactReason = parseContactReason(parsed.contact_reason, new Set(conversation.messages.map((message) => message.id)));
+    } catch {
+      throw new ModelOutputError("некорректная причина обращения, исход или ссылки на реплики.");
+    }
+  }
   for (const row of parsed.results) {
     if (
       !object(row) ||
@@ -408,6 +420,7 @@ export function scoreModelOutput(
         "reason",
         "evidence_ids",
         "evidence_kind",
+        ...(Object.hasOwn(row, "coaching") ? ["coaching"] : []),
       ]) ||
       !text(row.criterion_id, 300) ||
       byId.has(row.criterion_id) ||
@@ -433,6 +446,14 @@ export function scoreModelOutput(
         "ответ, применимость или ступень шкалы не соответствует критерию.",
       );
     }
+    let coaching: CriterionResult["coaching"];
+    if (row.coaching !== undefined && row.coaching !== null) {
+      try {
+        coaching = parseCriterionCoaching(row.coaching, criterion, row.value, new Set(conversation.messages.map((message) => message.id)));
+      } catch {
+        throw new ModelOutputError("некорректная рекомендация, применимость или ссылки на реплики.");
+      }
+    }
     return {
       criterionId: criterion.id,
       answer: row.value,
@@ -440,6 +461,7 @@ export function scoreModelOutput(
       points: null,
       explanation: (row.reason as string).trim(),
       evidence: evidenceFromModel(conversation, row),
+      ...(coaching ? { coaching } : {}),
       ...(row.value === null
         ? { naReason: (row.reason as string).trim() }
         : {}),
@@ -456,6 +478,7 @@ export function scoreModelOutput(
     })),
     total: scored.total,
     grossViolation: scored.grossViolation,
+    ...(contactReason ? { contactReason } : {}),
   };
 }
 

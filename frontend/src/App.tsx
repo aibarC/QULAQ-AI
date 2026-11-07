@@ -1,3 +1,5 @@
+import CoachingAdvice from "./components/CoachingAdvice";
+import ManagerDashboard from "./components/ManagerDashboard";
 import MotionSettings from "./components/MotionSettings";
 import SplitWorkspace from "./components/SplitWorkspace";
 import ListeningStage from "./components/ListeningStage";
@@ -5,6 +7,7 @@ import UploadTranscript from "./components/UploadTranscript";
 import ConversationRow from "./components/ConversationRow";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
@@ -76,7 +79,7 @@ import {
 } from "./components/Shared";
 
 type Route = {
-  page: "dialogs" | "dialog" | "checklists" | "appeals" | "appeal";
+  page: "dialogs" | "dialog" | "checklists" | "appeals" | "appeal" | "reports";
   id?: string;
   evaluationId?: string;
 };
@@ -91,9 +94,14 @@ function readRoute(): Route {
   const parts = (path || "/dialogs").split("/").filter(Boolean);
   const page = parts[0];
   return {
-    page: ["dialogs", "dialog", "checklists", "appeals", "appeal"].includes(
-      page,
-    )
+    page: [
+      "dialogs",
+      "dialog",
+      "checklists",
+      "appeals",
+      "appeal",
+      "reports",
+    ].includes(page)
       ? (page as Route["page"])
       : "dialogs",
     id: parts[1] ? decodeURIComponent(parts[1]) : undefined,
@@ -107,9 +115,8 @@ function errorMessage(e: unknown) {
 }
 function storedRole(): Role {
   try {
-    return sessionStorage.getItem("qulaq-role") === "reviewer"
-      ? "reviewer"
-      : "user";
+    const saved = sessionStorage.getItem("qulaq-role");
+    return saved === "reviewer" || saved === "manager" ? saved : "user";
   } catch {
     return "user";
   }
@@ -326,7 +333,7 @@ export default function App() {
     if (
       adapter.mode !== "api" ||
       loading ||
-      !["appeals", "appeal"].includes(route.page)
+      !["appeals", "appeal", "reports"].includes(route.page)
     )
       return;
     let cancelled = false;
@@ -350,7 +357,7 @@ export default function App() {
       } catch {
         if (!cancelled)
           setAppealRefreshError(
-            "Не удалось обновить обращения. Показаны последние сохранённые данные; повторим обновление автоматически.",
+            "Не удалось обновить данные. Показаны последние сохранённые данные; повторим обновление автоматически.",
           );
       } finally {
         running = false;
@@ -435,7 +442,17 @@ export default function App() {
     } catch {
       /* Still usable without storage. */
     }
-    go({ page: next === "reviewer" ? "appeals" : "dialogs" }, true);
+    go(
+      {
+        page:
+          next === "manager"
+            ? "reports"
+            : next === "reviewer"
+              ? "appeals"
+              : "dialogs",
+      },
+      true,
+    );
   }
   async function mutate(
     key: string,
@@ -572,17 +589,19 @@ export default function App() {
           : 1,
     );
   const title =
-    route.page === "dialogs"
-      ? "Диалоги"
-      : route.page === "dialog"
-        ? "Карточка диалога"
-        : route.page === "checklists"
-          ? "Чек-листы"
-          : route.page === "appeal"
-            ? "Рассмотрение обращения"
-            : role === "reviewer"
-              ? "Апелляции"
-              : "Мои апелляции";
+    route.page === "reports"
+      ? "Отчёт для руководителя"
+      : route.page === "dialogs"
+        ? "Диалоги"
+        : route.page === "dialog"
+          ? "Карточка диалога"
+          : route.page === "checklists"
+            ? "Чек-листы"
+            : route.page === "appeal"
+              ? "Рассмотрение обращения"
+              : role === "reviewer"
+                ? "Апелляции"
+                : "Мои апелляции";
   const openAppeal = (id: string) => go({ page: "appeal", id });
   async function evaluateConversation(
     recordId: string,
@@ -658,52 +677,68 @@ export default function App() {
     }
   }
   const allowed =
-    role === "user" || route.page === "appeals" || route.page === "appeal";
-  const commands: CommandItem[] = [
-    ...(role === "user"
+    role === "manager"
+      ? route.page === "reports"
+      : role === "user"
+        ? route.page !== "reports"
+        : route.page === "appeals" || route.page === "appeal";
+  const commands: CommandItem[] =
+    role === "manager"
       ? [
           {
-            id: "nav-dialogs",
-            title: "Диалоги",
-            detail: "Все разговоры и фильтры",
+            id: "nav-reports",
+            title: "Отчёт для руководителя",
+            detail: "Качество и повторяющиеся нарушения",
             group: "Раздел",
-            run: () => go({ page: "dialogs" }),
-          },
-          {
-            id: "nav-checklists",
-            title: "Чек-листы",
-            detail: "Критерии, веса и версии правил",
-            group: "Раздел",
-            run: () => go({ page: "checklists" }),
+            run: () => go({ page: "reports" }),
           },
         ]
-      : []),
-    {
-      id: "nav-appeals",
-      title: role === "reviewer" ? "Апелляции" : "Мои апелляции",
-      detail: `${pending} ожидают решения`,
-      group: "Раздел",
-      run: () => go({ page: "appeals" }),
-    },
-    ...(role === "user"
-      ? workspace.conversations.map((c) => ({
-          id: c.id,
-          title: c.externalId,
-          detail:
-            c.messages.find((m) => m.speaker === "client")?.text ||
-            "Открыть транскрипт",
-          search: `${c.language} ${c.messages.map((m) => m.text).join(" ")}`,
-          group: c.demo ? "Учебный пример" : `Диалог / ${c.language}`,
-          run: () => go({ page: "dialog", id: c.id }),
-        }))
-      : workspace.appeals.map((a) => ({
-          id: a.id,
-          title: `Апелляция ${a.id.slice(-6)}`,
-          detail: a.comment,
-          group: a.status === "pending" ? "Ожидает решения" : "Рассмотрена",
-          run: () => go({ page: "appeal", id: a.id }),
-        }))),
-  ];
+      : [
+          ...(role === "user"
+            ? [
+                {
+                  id: "nav-dialogs",
+                  title: "Диалоги",
+                  detail: "Все разговоры и фильтры",
+                  group: "Раздел",
+                  run: () => go({ page: "dialogs" }),
+                },
+                {
+                  id: "nav-checklists",
+                  title: "Чек-листы",
+                  detail: "Критерии, веса и версии правил",
+                  group: "Раздел",
+                  run: () => go({ page: "checklists" }),
+                },
+              ]
+            : []),
+          {
+            id: "nav-appeals",
+            title: role === "reviewer" ? "Апелляции" : "Мои апелляции",
+            detail: `${pending} ожидают решения`,
+            group: "Раздел",
+            run: () => go({ page: "appeals" }),
+          },
+          ...(role === "user"
+            ? workspace.conversations.map((c) => ({
+                id: c.id,
+                title: c.externalId,
+                detail:
+                  c.messages.find((m) => m.speaker === "client")?.text ||
+                  "Открыть транскрипт",
+                search: `${c.language} ${c.messages.map((m) => m.text).join(" ")}`,
+                group: c.demo ? "Учебный пример" : `Диалог / ${c.language}`,
+                run: () => go({ page: "dialog", id: c.id }),
+              }))
+            : workspace.appeals.map((a) => ({
+                id: a.id,
+                title: `Апелляция ${a.id.slice(-6)}`,
+                detail: a.comment,
+                group:
+                  a.status === "pending" ? "Ожидает решения" : "Рассмотрена",
+                run: () => go({ page: "appeal", id: a.id }),
+              }))),
+        ];
   return (
     <div
       className="app-shell"
@@ -736,7 +771,14 @@ export default function App() {
           className="brand-button"
           aria-label="Qulaq — главная"
           onClick={() =>
-            go({ page: role === "reviewer" ? "appeals" : "dialogs" })
+            go({
+              page:
+                role === "manager"
+                  ? "reports"
+                  : role === "reviewer"
+                    ? "appeals"
+                    : "dialogs",
+            })
           }
         >
           <Logo />
@@ -753,7 +795,15 @@ export default function App() {
         <nav aria-label="Главная навигация">
           {(role === "user"
             ? navItems
-            : [{ page: "appeals" as const, label: "Апелляции", icon: Inbox }]
+            : role === "manager"
+              ? [
+                  {
+                    page: "reports" as const,
+                    label: "Отчёт для руководителя",
+                    icon: BarChart3,
+                  },
+                ]
+              : [{ page: "appeals" as const, label: "Апелляции", icon: Inbox }]
           ).map((item) => (
             <button
               key={item.page}
@@ -792,10 +842,16 @@ export default function App() {
             <ArrowUpRight size={14} />
           </button>
           <div className="sidebar-profile">
-            <div className="avatar">{role === "user" ? "КК" : "ПР"}</div>
+            <div className="avatar">
+              {role === "user" ? "КК" : role === "manager" ? "РК" : "ПР"}
+            </div>
             <div>
               <strong>
-                {role === "user" ? "Специалист по качеству" : "Проверяющий"}
+                {role === "user"
+                  ? "Специалист по качеству"
+                  : role === "manager"
+                    ? "Руководитель"
+                    : "Проверяющий"}
               </strong>
               <span>Демонстрация ролей</span>
             </div>
@@ -871,6 +927,14 @@ export default function App() {
                 <ShieldCheck size={15} />
                 <span>Проверяющий</span>
               </button>
+              <button
+                className={role === "manager" ? "selected" : ""}
+                onClick={() => switchRole("manager")}
+                aria-pressed={role === "manager"}
+              >
+                <BarChart3 size={15} />
+                <span>Руководитель</span>
+              </button>
             </div>
           </div>
         </header>
@@ -909,21 +973,50 @@ export default function App() {
             <div className="panel">
               <Empty
                 icon={<ShieldCheck size={30} />}
-                title="Рабочее место проверяющего"
+                title={
+                  role === "manager"
+                    ? "Рабочее место руководителя"
+                    : "Выберите раздел своей роли"
+                }
                 action={
                   <button
                     className="button primary"
-                    onClick={() => go({ page: "appeals" })}
+                    onClick={() =>
+                      go({
+                        page:
+                          role === "manager"
+                            ? "reports"
+                            : role === "reviewer"
+                              ? "appeals"
+                              : "dialogs",
+                      })
+                    }
                   >
-                    Открыть очередь
+                    Открыть рабочее место
                   </button>
                 }
               >
-                В этом режиме разговоры открываются внутри апелляций.
+                Доступные разделы находятся в меню выбранной роли.
               </Empty>
             </div>
           ) : (
             <>
+              {route.page === "reports" && (
+                <>
+                  {" "}
+                  {appealRefreshError && (
+                    <ErrorBox>{appealRefreshError}</ErrorBox>
+                  )}
+                  <ManagerDashboard
+                    workspace={workspace}
+                    onClassify={async (evaluationId) => {
+                      await mutate(`classify:${evaluationId}`, () =>
+                        adapter.classifyReason(evaluationId),
+                      );
+                    }}
+                  />
+                </>
+              )}
               {route.page === "dialogs" && (
                 <>
                   <div className="page-heading">
@@ -2177,6 +2270,12 @@ function AppealDetail({
                 <strong>{answerLabel(result.originalAnswer, criterion)}</strong>
               </div>
               <p>{result.explanation}</p>
+              <CoachingAdvice
+                key={`${evaluation.id}:${criterion.id}`}
+                criterion={criterion}
+                result={result}
+                onEvidence={setHighlighted}
+              />
               {result.evidence.map((ev, i) => (
                 <EvidenceCard key={i} evidence={ev} onSelect={setHighlighted} />
               ))}

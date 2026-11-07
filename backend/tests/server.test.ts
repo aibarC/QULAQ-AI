@@ -8,8 +8,10 @@ import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createApp, type AppOptions } from "../src/server.ts";
 import { createStore } from "../src/store.ts";
+import { LayaError, LAYA_MODEL, LAYA_REVISION } from "../src/laya.ts";
 import type {
   Checklist,
+  ContactReason,
   Conversation,
   Evaluation,
   Workspace,
@@ -175,6 +177,92 @@ async function settled(store: Awaited<ReturnType<typeof createStore>>) {
   throw new Error("Synthetic job did not finish");
 }
 
+async function seedClassifiableEvaluation(store: Awaited<ReturnType<typeof createStore>>) {
+  const scored = outcome({ conversation: record, checklist: rules, signal: new AbortController().signal });
+  const evaluation: Evaluation = {
+    id: "synthetic:existing-evaluation", recordId: record.id, checklist: structuredClone(rules), createdAt: "2026-11-08T00:00:00Z",
+    ...scored, originalTotal: scored.total, demo: false,
+    contactReason: {
+      taxonomyVersion: 1, primary: "other", secondary: [], summary: "Prior synthetic reason", reason: "Prior synthetic explanation",
+      evidenceIds: [record.messages[0].id], resolution: { status: "unknown", reason: "Prior outcome unknown", evidenceIds: [] },
+    },
+  };
+  await store.mutate((draft) => {
+    draft.evaluations.push(evaluation);
+    draft.conversations[0].status = "evaluated";
+  });
+  return evaluation;
+}
+
+test("classify-reason disabled returns 503 without changing saved state or invoking the evaluator", async (t) => {
+  let gatewayCalls = 0;
+  const f = await fixture(t, { evaluate: async () => { gatewayCalls++; throw new Error("Synthetic gateway forbidden"); } });
+  const evaluation = await seedClassifiableEvaluation(f.store);
+  const before = f.store.snapshot();
+  const response = await f.post(`/api/evaluations/${encodeURIComponent(evaluation.id)}/classify-reason`, {});
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "LOCAL_CLASSIFIER_DISABLED");
+  assert.deepEqual(f.store.snapshot(), before);
+  assert.equal(gatewayCalls, 0);
+});
+
+test("classify-reason saves local provenance and clears old errors while preserving every scoring field", async (t) => {
+  let gatewayCalls = 0, localCalls = 0;
+  const classification: ContactReason = {
+    taxonomyVersion: 1, primary: "technical", secondary: [], summary: "Synthetic local classification", reason: "Synthetic local source",
+    evidenceIds: [record.messages[0].id], resolution: { status: "unknown", reason: "Synthetic outcome unknown", evidenceIds: [] },
+    classifier: { provider: "laya", model: LAYA_MODEL, revision: LAYA_REVISION, criterionId: "clear", messageIds: [record.messages[0].id] },
+  };
+  const f = await fixture(t, {
+    evaluate: async () => { gatewayCalls++; throw new Error("Synthetic gateway forbidden"); },
+    classifyReason: async (conversation, evaluation) => {
+      localCalls++;
+      assert.equal(conversation.id, record.id);
+      assert.equal(evaluation.id, "synthetic:existing-evaluation");
+      assert.equal(evaluation.total, 100);
+      return classification;
+    },
+  });
+  const evaluation = await seedClassifiableEvaluation(f.store);
+  await f.store.mutate((draft) => { draft.evaluations[0].classificationError = { provider: "laya", code: "unavailable", message: "Synthetic previous error" }; });
+  const response = await f.post(`/api/evaluations/${encodeURIComponent(evaluation.id)}/classify-reason`, {});
+  assert.equal(response.status, 200);
+  const returned = await response.json() as Workspace;
+  assert.deepEqual(returned, f.store.snapshot());
+  assert.deepEqual(returned.evaluations[0], { ...evaluation, contactReason: classification });
+  assert.equal(returned.evaluations[0].classificationError, undefined);
+  assert.equal(returned.conversations[0].status, "evaluated");
+  assert.equal(localCalls, 1);
+  assert.equal(gatewayCalls, 0);
+});
+
+test("classify-reason failure saves safe error but preserves prior classification and scores without gateway calls", async (t) => {
+  for (const typedError of [true, false]) {
+    await t.test(typedError ? "typed local error" : "unexpected sanitized error", async (t) => {
+      let gatewayCalls = 0, localCalls = 0;
+      const f = await fixture(t, {
+        evaluate: async () => { gatewayCalls++; throw new Error("Synthetic gateway forbidden"); },
+        classifyReason: async () => {
+          localCalls++;
+          throw typedError ? new LayaError("timeout") : new Error("SYNTHETIC_PRIVATE_TRACE");
+        },
+      });
+      const evaluation = await seedClassifiableEvaluation(f.store);
+      const response = await f.post(`/api/evaluations/${encodeURIComponent(evaluation.id)}/classify-reason`, {});
+      assert.equal(response.status, 200);
+      const returned = await response.json() as Workspace;
+      assert.deepEqual(returned, f.store.snapshot());
+      const { classificationError, ...preserved } = returned.evaluations[0];
+      assert.deepEqual(preserved, evaluation);
+      assert.equal(classificationError?.provider, "laya");
+      assert.equal(classificationError?.code, typedError ? "timeout" : "failed");
+      assert.equal(JSON.stringify(returned).includes("SYNTHETIC_PRIVATE_TRACE"), false);
+      assert.equal(localCalls, 1);
+      assert.equal(gatewayCalls, 0);
+    });
+  }
+});
+
 test("provider is disabled by default and unsafe origins, JSON and oversized bodies are rejected", async (t) => {
   let calls = 0;
   const f = await fixture(t, {
@@ -315,6 +403,22 @@ test("async evaluation returns 202, deduplicates in-flight starts and retains th
   assert.equal(state.evaluations[0].checklist.version, 1);
   assert.equal(state.checklists[0].version, 2);
   assert.equal((await f.post("/api/checklists", rules)).status, 409);
+});
+
+test("async evaluation persists contact reason and serves its unchanged evidence through workspace", async (t) => {
+  const contactReason: ContactReason = {
+    taxonomyVersion: 1, primary: "technical", secondary: [], summary: "Синтетический сбой",
+    reason: "Синтетическое описание проблемы.", evidenceIds: [record.messages[0].id],
+    resolution: { status: "unknown", reason: "Результат не подтверждён.", evidenceIds: [] },
+  };
+  const f = await fixture(t, {
+    allowEvaluation: true,
+    evaluate: async (input) => ({ ...outcome(input), contactReason }),
+  });
+  assert.equal((await f.post("/api/evaluations", { recordId: record.id, checklistId: rules.id })).status, 202);
+  const state = await settled(f.store);
+  assert.deepEqual(state.evaluations[0].contactReason, contactReason);
+  assert.equal(state.conversations[0].status, "evaluated");
 });
 
 test("provider or invalid output failure preserves the previous evaluation and does not retry", async (t) => {

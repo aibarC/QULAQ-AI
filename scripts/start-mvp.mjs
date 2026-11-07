@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
@@ -9,8 +10,9 @@ const uiEnv = {
 };
 delete uiEnv.LLM_API_TOKEN;
 delete uiEnv.LLM_BASE_URL;
+const localLaya = existsSync(resolve(root, ".local/laya-venv/bin/python")) && existsSync(resolve(root, ".local/laya-model/model.safetensors"));
 const children = [
-  spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
+  spawn(process.execPath, ["--import", "tsx", "src/index.ts", ...(localLaya ? ["--local-laya"] : [])], {
     cwd: resolve(root, "backend"),
     stdio: "inherit",
   }),
@@ -48,3 +50,5 @@ process.on("SIGTERM", () => stop());
 console.log(
   "QULAQ: http://127.0.0.1:5173 — сервер подключается локально, вызовы LLM отключены.",
 );
+
+console.log(localLaya ? "Laya: локальная классификация подключена автоматически после анализа." : "Laya: локальное окружение ещё не установлено.");

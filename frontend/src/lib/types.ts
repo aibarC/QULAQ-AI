@@ -1,4 +1,11 @@
-export type Role = "user" | "reviewer";
+import type { ContactReason } from "./contactReasons";
+export type {
+  ContactReason,
+  ContactReasonCategory,
+  ResolutionStatus,
+} from "./contactReasons";
+
+export type Role = "user" | "reviewer" | "manager";
 export type Status = "unrated" | "evaluating" | "evaluated" | "error";
 export interface Message {
   id: string;
@@ -43,6 +50,14 @@ export interface Evidence {
   quote: string;
   kind: "quote" | "range";
 }
+export interface CriterionCoaching {
+  /** Suggested utterance, never an action already performed or a customer-facing send. */
+  response: string | null;
+  explanation: string;
+  /** True when missing business context prevents drafting safely; response must be null. */
+  needsContext: boolean;
+  messageIds: string[];
+}
 export interface CriterionResult {
   criterionId: string;
   answer: Answer;
@@ -51,7 +66,20 @@ export interface CriterionResult {
   explanation: string;
   evidence: Evidence[];
   naReason?: string;
+  /** Original model guidance; retained through appeals, shown only while current answer is an issue. */
+  coaching?: CriterionCoaching;
   override?: { answer: Answer; reason: string; appealId: string };
+}
+export interface ClassificationError {
+  provider: "laya";
+  code:
+    | "missing_fragment"
+    | "invalid_fragment"
+    | "unavailable"
+    | "timeout"
+    | "invalid_output"
+    | "failed";
+  message: string;
 }
 export interface Evaluation {
   id: string;
@@ -63,6 +91,9 @@ export interface Evaluation {
   originalTotal: number | null;
   grossViolation: boolean;
   demo: boolean;
+  /** Absent on historic runs; never inferred or backfilled by the UI. */
+  contactReason?: ContactReason;
+  classificationError?: ClassificationError;
 }
 export interface Appeal {
   id: string;
@@ -93,6 +124,7 @@ export interface DecisionInput {
 export interface WorkspaceAdapter {
   readonly mode: "local" | "api";
   load(): Promise<Workspace>;
+  classifyReason(evaluationId: string): Promise<Workspace>;
   importDataset(groupId: string): Promise<Workspace>;
   uploadDataset(dataset: unknown): Promise<Workspace>;
   saveChecklist(checklist: Checklist): Promise<Workspace>;

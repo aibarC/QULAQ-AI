@@ -1,0 +1,7 @@
+# Isolated local runtime, no API credentials. Tested on Python 3.11 / Apple Silicon.
+laya==0.3.20
+torch==2.9.0
+transformers==4.57.1
+huggingface-hub==0.36.0
+safetensors==0.6.2
+numpy==2.2.6

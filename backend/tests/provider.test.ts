@@ -7,6 +7,8 @@ import { createGatewayEvaluator } from "../src/provider.ts";
 import { getRuntimeConfig } from "../src/config.ts";
 import { demoConversation } from "../../frontend/src/lib/fixtures.ts";
 import { initialChecklist } from "../src/scoring.ts";
+import { LayaError } from "../src/laya.ts";
+import type { ContactReason } from "../../frontend/src/lib/types.ts";
 
 // No dotenv loader or runtime entrypoint is imported. Even an accidental omitted
 // fetcher must fail locally; this suite can never contact the gateway.
@@ -178,6 +180,50 @@ test("one enabled synthetic request succeeds, sends no redirect/retry, and persi
   const receipt = JSON.parse(await readFile(quotaPath, "utf8"));
   assert.deepEqual(Object.keys(receipt), ["consumedAt"]);
   assert.ok(Number.isFinite(Date.parse(receipt.consumedAt)));
+});
+
+test("automatic local enrichment runs once after scoring and classification failure retains scores without retry", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "qulaq-provider-local-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const category: ContactReason = {
+    taxonomyVersion: 1, primary: "technical", secondary: [], summary: "Synthetic classification", reason: "Synthetic local result",
+    evidenceIds: [conversation.messages[0].id], resolution: { status: "unknown", reason: "Synthetic unknown", evidenceIds: [] },
+  };
+  for (const fail of [false, true]) {
+    const stages: string[] = [];
+    const evaluator = createGatewayEvaluator({
+      ...options(join(directory, `quota-${fail}.json`), (async () => { stages.push("fetch"); return response(); }) as typeof fetch),
+      localClassifier: async (receivedConversation, receivedChecklist, scoredResults) => {
+        stages.push("local");
+        assert.equal(receivedConversation, conversation);
+        assert.equal(receivedChecklist, checklist);
+        assert.equal(scoredResults.length, 8);
+        assert.equal(scoredResults.reduce((total, result) => total + (result.points ?? 0), 0), 100);
+        if (fail) throw new LayaError("unavailable");
+        return category;
+      },
+    });
+    const result = await evaluator(input());
+    assert.equal(result.total, 100);
+    assert.equal(result.results.length, 8);
+    assert.equal(result.grossViolation, false);
+    if (fail) {
+      assert.equal(result.contactReason, undefined);
+      assert.equal("classificationError" in result && result.classificationError?.code, "unavailable");
+    } else {
+      assert.deepEqual(result.contactReason, category);
+    }
+    await assert.rejects(() => evaluator(input()), /ONE_TEST_ALREADY_USED/);
+    assert.deepEqual(stages, ["fetch", "local"]);
+  }
+  let localCalls = 0;
+  const invalidScoring = createGatewayEvaluator({
+    ...options(join(directory, "quota-invalid.json"), (async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ results: [] }) } }] }))) as typeof fetch),
+    localClassifier: async () => { localCalls++; return category; },
+  });
+  await assert.rejects(() => invalidScoring(input()), /полный массив/);
+  assert.equal(localCalls, 0);
+  assert.equal(networkGuard.mock.callCount(), 0);
 });
 
 test(

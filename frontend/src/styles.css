@@ -3590,3 +3590,12 @@ h3 {
     transform: none;
   }
 }
+
+/* Three role choices stay readable on narrow screens. */
+@media (max-width: 600px) {
+  .app-shell .topbar { height: auto; min-height: 98px; flex-wrap: wrap; padding: 10px 14px; gap: 8px; }
+  .topbar .breadcrumb { width: 100%; }
+  .topbar .topbar-actions { width: 100%; margin-left: 0; }
+  .topbar .role-control { flex: 1; }
+  .topbar .role-control button { flex: 1; padding: 7px 5px; gap: 4px; }
+}

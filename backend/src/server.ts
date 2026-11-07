@@ -1,3 +1,4 @@
+import { LayaError } from "./laya.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -15,6 +16,8 @@ import {
 import type {
   Checklist,
   Conversation,
+  ContactReason,
+  ClassificationError,
   CriterionResult,
   Evaluation,
   Workspace,
@@ -32,9 +35,15 @@ export interface AppOptions {
     results: CriterionResult[];
     total: number | null;
     grossViolation: boolean;
+    contactReason?: ContactReason;
+    classificationError?: ClassificationError;
   }>;
   recalculate(evaluation: Evaluation): Evaluation;
   allowEvaluation?: boolean;
+  classifyReason?: (
+    conversation: Conversation,
+    evaluation: Evaluation,
+  ) => Promise<ContactReason>;
   datasetPath: string;
 }
 
@@ -232,6 +241,14 @@ export function createApp(options: AppOptions): Server {
         total: outcome.total,
         originalTotal: outcome.total,
         grossViolation: outcome.grossViolation,
+        ...(outcome.contactReason
+          ? { contactReason: structuredClone(outcome.contactReason) }
+          : {}),
+        ...(outcome.classificationError
+          ? {
+              classificationError: structuredClone(outcome.classificationError),
+            }
+          : {}),
       };
       await store.mutate((draft) => {
         const record = draft.conversations.find(
@@ -258,6 +275,7 @@ export function createApp(options: AppOptions): Server {
     }
   }
 
+  const classifying = new Set<string>();
   const server = createServer(async (request, response) => {
     try {
       checkLocalRequest(request);
@@ -362,6 +380,80 @@ export function createApp(options: AppOptions): Server {
           else draft.checklists.push(next);
         });
         return send(response, 200, workspace);
+      }
+
+      const classifyMatch =
+        /^\/api\/evaluations\/([^/]+)\/classify-reason$/.exec(path);
+      if (classifyMatch) {
+        if (!options.classifyReason)
+          throw new HttpError(
+            503,
+            "LOCAL_CLASSIFIER_DISABLED",
+            "Локальная Laya не подключена. Запустите сервер с --local-laya.",
+          );
+        const evaluationId = decodeURIComponent(classifyMatch[1]);
+        if (classifying.size)
+          throw new HttpError(
+            409,
+            "CLASSIFICATION_BUSY",
+            "Laya уже обрабатывает разговор. Дождитесь результата.",
+          );
+        const snapshot = store.snapshot();
+        const evaluation = snapshot.evaluations.find(
+          (item) => item.id === evaluationId,
+        );
+        const conversation = snapshot.conversations.find(
+          (item) => item.id === evaluation?.recordId,
+        );
+        if (
+          !evaluation ||
+          !conversation ||
+          evaluation.demo ||
+          conversation.demo
+        )
+          throw new HttpError(
+            404,
+            "NOT_FOUND",
+            "Сохранённый анализ не найден.",
+          );
+        classifying.add(evaluationId);
+        try {
+          let classified: ContactReason | undefined;
+          let classificationError: ClassificationError | undefined;
+          try {
+            classified = await options.classifyReason(conversation, evaluation);
+          } catch (error) {
+            classificationError = {
+              provider: "laya",
+              code: error instanceof LayaError ? error.code : "failed",
+              message:
+                error instanceof LayaError
+                  ? error.message
+                  : "Не удалось классифицировать фрагмент локально. Повтор автоматически не выполняется.",
+            };
+          }
+          const workspace = await store.mutate((draft) => {
+            const current = draft.evaluations.find(
+              (item) => item.id === evaluationId,
+            );
+            if (!current)
+              throw new HttpError(
+                404,
+                "NOT_FOUND",
+                "Анализ больше не доступен.",
+              );
+            // Update only classification: concurrent review decisions remain intact.
+            if (classified) {
+              current.contactReason = classified;
+              delete current.classificationError;
+            } else {
+              current.classificationError = classificationError;
+            }
+          });
+          return send(response, 200, workspace);
+        } finally {
+          classifying.delete(evaluationId);
+        }
       }
 
       if (path === "/api/evaluations") {
