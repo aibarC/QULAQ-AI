@@ -15,13 +15,17 @@ const fixture = {
 };
 
 async function open(page: Page) {
-  await page.route("**/__local/dataset", route => route.fulfill({ json: fixture }));
+  await page.route("**/__local/annotations", route => route.fulfill({ json: {} }));
+  await page.route("**/__local/dataset", route => route.fulfill({ json: { isSuccess: true, data: { dataset_group_id: "DEV", total_records: 0, records: [] } } }));
+  const loaded = page.waitForResponse(response => response.url().endsWith("/__local/dataset"));
   await page.goto("/");
+  await loaded;
   await expect(page.getByRole("button", { name: "Загрузить набор", exact: true })).toBeEnabled();
 }
 async function importFixture(page: Page) {
+  await page.route("**/__local/dataset", route => route.fulfill({ json: fixture }));
   await page.getByRole("button", { name: "Загрузить набор", exact: true }).click();
-  await expect(page.locator(".table-footer")).toContainText("1–12 из 15");
+  await expect(page.locator(".table-footer")).toContainText("1–15 из 15");
 }
 async function search(page: Page, query: string) {
   await page.getByRole("button", { name: "Быстрый поиск", exact: true }).click();
@@ -47,7 +51,7 @@ async function expectNoOverflow(page: Page, stage: string) {
 
 test("command shortcut focuses search, supports keyboard selection and restores focus on Escape", async ({ page }, testInfo) => {
   await open(page);
-  await page.screenshot({ path: testInfo.outputPath("design-empty-desktop.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("design-empty-desktop.png"), fullPage: true, animations: "disabled" });
   const trigger = page.getByRole("button", { name: "Быстрый поиск", exact: true });
   await trigger.focus();
   await page.keyboard.press("Control+k");
@@ -101,34 +105,28 @@ test("canceling command navigation preserves an unsaved checklist", async ({ pag
   await expect(page.getByRole("button", { name: "Сохранить чек-лист", exact: true })).toBeEnabled();
 });
 
-test("signal actions reset other filters and density changes actual row height", async ({ page }, testInfo) => {
+test("local preview hides backend status controls and density changes actual row height", async ({ page }, testInfo) => {
   await open(page);
   await importFixture(page);
-  await expect(page.getByLabel("Оценено 0 из 15", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Обзор набора", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Фильтр по статусу")).toHaveCount(0);
   await page.getByLabel("Фильтр по языку").selectOption("EN");
-  await page.getByLabel("Фильтр по каналу").selectOption("voice call");
-  await page.getByRole("button", { name: "Без оценки 15", exact: true }).click();
-  await expect(page.getByLabel("Фильтр по языку")).toHaveValue("all");
-  await expect(page.getByLabel("Фильтр по каналу")).toHaveValue("all");
-  await expect(page.locator(".table-footer")).toContainText("1–12 из 15");
-  const large = await page.locator("tbody tr").first().boundingBox();
+  await expect(page.locator(".table-footer")).toContainText("из 3");
+  await page.getByLabel("Фильтр по языку").selectOption("all");
+  await expect(page.locator(".table-footer")).toContainText("1–15 из 15");
+  const large = await page.locator(".row-link").first().locator("xpath=ancestor::tr").boundingBox();
   await page.getByRole("button", { name: "Компактный список", exact: true }).click();
   await expect(page.getByRole("button", { name: "Компактный список", exact: true })).toHaveAttribute("aria-pressed", "true");
-  const compact = await page.locator("tbody tr").first().boundingBox();
+  const compact = await page.locator(".row-link").first().locator("xpath=ancestor::tr").boundingBox();
   expect(compact!.height).toBeLessThan(large!.height);
-  await page.getByRole("button", { name: "Оценены 0", exact: true }).click();
-  await expect(page.locator("tbody tr")).toHaveCount(0);
-  await page.getByRole("button", { name: "Показать все 15", exact: true }).click();
-  await expect(page.locator(".table-footer")).toContainText("1–12 из 15");
-  await expect(page.getByLabel("Фильтр по статусу")).toHaveValue("all");
-  await page.screenshot({ path: testInfo.outputPath("design-synthetic-overview-desktop.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("design-synthetic-overview-desktop.png"), fullPage: true, animations: "disabled" });
 });
 
 test("390px search, overview and compact table fit viewport", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page);
   await expectNoOverflow(page, "empty");
-  await page.screenshot({ path: testInfo.outputPath("design-empty-mobile.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("design-empty-mobile.png"), fullPage: true, animations: "disabled" });
   await search(page, "DEMO-001");
   const modal = await page.getByRole("dialog").boundingBox();
   expect(modal!.width).toBeLessThanOrEqual(390);
@@ -139,7 +137,7 @@ test("390px search, overview and compact table fit viewport", async ({ page }, t
   await expectNoOverflow(page, "overview");
   await page.getByRole("button", { name: "Компактный список", exact: true }).click();
   await expectNoOverflow(page, "compact");
-  await page.screenshot({ path: testInfo.outputPath("design-synthetic-overview-mobile.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("design-synthetic-overview-mobile.png"), fullPage: true, animations: "disabled" });
 });
 
 test("390px teaching result has no document overflow", async ({ page }, testInfo) => {
@@ -148,7 +146,7 @@ test("390px teaching result has no document overflow", async ({ page }, testInfo
   await page.getByRole("button", { name: "Учебный пример", exact: true }).click();
   await page.getByRole("button", { name: "Оценить", exact: true }).click();
   await expect(page.locator(".score-number")).toHaveText("85,00/ 100");
-  await page.screenshot({ path: testInfo.outputPath("design-teaching-mobile.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("design-teaching-mobile.png"), fullPage: true, animations: "disabled" });
   await expectNoOverflow(page, "evaluated teaching example");
 });
 
@@ -194,7 +192,7 @@ test("listening stage switches its explanation and sculpture, pauses and resumes
   const playStates = () => stage.locator(".listening-sculpture i").evaluateAll(elements => [...new Set(elements.map(element => getComputedStyle(element).animationPlayState))]);
   await expect.poll(playStates).toEqual(["paused"]);
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: testInfo.outputPath("listening-stage-desktop.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("listening-stage-desktop.png"), fullPage: true, animations: "disabled" });
   await play.click();
   await expect.poll(playStates).toEqual(["running"]);
   await stage.getByRole("button", { name: "Исследовать пример", exact: true }).click();
@@ -220,7 +218,7 @@ test("390px listening scenes remain usable with reduced motion", async ({ page }
     await expect.poll(() => stage.locator(".listening-sculpture i, .listening-quote, .listening-explanation").evaluateAll(elements => [...new Set(elements.map(element => getComputedStyle(element).animationName))])).toEqual(["none"]);
   }
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: testInfo.outputPath("listening-stage-mobile.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("listening-stage-mobile.png"), fullPage: true, animations: "disabled" });
   await stage.getByRole("button", { name: "Исследовать пример", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Учебный диалог", exact: true })).toBeVisible();
   await expectNoOverflow(page, "teaching dialogue opened from listening stage");

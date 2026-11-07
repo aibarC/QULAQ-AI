@@ -129,6 +129,44 @@
 .evaluation-panel .criteria-distribution {
   padding: 0 3px;
 }
+.evaluation-panel .excel-preview-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 16px 18px;
+  border: 1px solid #d9d2e9;
+  border-radius: 12px;
+  background: linear-gradient(115deg, #f3effa, #f4f7fc);
+  color: #59456d;
+}
+.evaluation-panel .excel-preview-note > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #8266a0;
+}
+.evaluation-panel .excel-preview-note strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.6;
+  font-weight: 650;
+}
+.evaluation-panel .excel-preview-note p {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #756382;
+}
+.evaluation-panel .evaluation-export {
+  display: flex;
+  justify-content: flex-end;
+}
+.evaluation-panel .evaluation-export [role="alert"] {
+  max-width: 280px;
+  margin-top: 8px;
+  color: #9b4266;
+  font-size: 11px;
+  line-height: 1.6;
+}
 .evaluation-panel .criteria-distribution-bar {
   display: flex;
   gap: 4px;
@@ -392,5 +430,220 @@
 
 html[data-motion="off"] .evaluation-panel .quality-ring-value,
 html[data-motion="moderate"] .evaluation-panel .quality-ring-value {
+  transition: none;
+}
+
+.evaluation-panel .checklist-preview {
+  overflow: hidden;
+}
+.evaluation-panel .checklist-preview-heading {
+  padding: 22px 24px;
+  border-bottom: 1px solid #e7e1ef;
+  background: linear-gradient(120deg, #faf8ff, #f7f9fc);
+}
+.evaluation-panel .checklist-preview-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 650;
+  color: #786293;
+  margin-bottom: 12px;
+}
+.evaluation-panel .checklist-preview-heading h3 {
+  font-size: 17px;
+  line-height: 1.4;
+  letter-spacing: -0.03em;
+  color: #332b49;
+  overflow-wrap: anywhere;
+}
+.evaluation-panel .checklist-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 15px;
+  margin-top: 8px;
+  color: #71627f;
+  font-size: 11px;
+}
+.evaluation-panel .checklist-preview-heading > p {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #6d6179;
+}
+.evaluation-panel .checklist-preview-list {
+  margin: 0;
+  padding: 0 24px;
+  list-style: none;
+}
+.evaluation-panel .checklist-preview-criterion {
+  padding: 22px 0;
+  border-bottom: 1px solid #ece7f2;
+}
+.evaluation-panel .checklist-preview-criterion:last-child {
+  border-bottom: 0;
+}
+.evaluation-panel .checklist-preview-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.evaluation-panel .checklist-preview-title > span {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: #8c7b9e;
+}
+.evaluation-panel .checklist-preview-title h4 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 700;
+  color: #42324f;
+  overflow-wrap: anywhere;
+}
+.evaluation-panel .criterion-rule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+.evaluation-panel .criterion-rule-meta > span {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #f1edf7;
+  color: #675379;
+  font-size: 10px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.evaluation-panel .criterion-rules .criterion-rule-description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.75;
+  color: #685675;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.evaluation-panel .criterion-scale {
+  margin: 12px 0 0;
+  border-left: 2px solid #ddd2ec;
+  padding-left: 12px;
+}
+.evaluation-panel .criterion-scale > div {
+  display: grid;
+  grid-template-columns: minmax(22px, max-content) minmax(0, 1fr);
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 11px;
+  line-height: 1.65;
+}
+.evaluation-panel .criterion-scale dt {
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  color: #644482;
+}
+.evaluation-panel .criterion-scale dd {
+  margin: 0;
+  color: #71617d;
+  overflow-wrap: anywhere;
+}
+.evaluation-panel .criterion-rules .criterion-rule-na {
+  margin: 12px 0 0;
+  font-size: 10px;
+  line-height: 1.7;
+  color: #796b85;
+}
+.evaluation-panel .criterion-rule-na strong {
+  font-weight: 550;
+}
+.evaluation-panel .criterion-rule-na.is-allowed {
+  border-left: 2px solid #c7c7de;
+  padding-left: 10px;
+}
+.evaluation-panel .criterion-rule-na.is-allowed strong {
+  display: block;
+  color: #655876;
+  margin-bottom: 3px;
+}
+.evaluation-panel .criterion-rule-na > span {
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.evaluation-panel .criterion-rule-disclosure {
+  margin: 14px 0;
+  border-top: 1px solid #e9e2f0;
+  border-bottom: 1px solid #e9e2f0;
+}
+.evaluation-panel .criterion-rule-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  list-style: none;
+  cursor: pointer;
+  color: #79608f;
+  font-size: 11px;
+  font-weight: 600;
+}
+.evaluation-panel .criterion-rule-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.evaluation-panel .criterion-rule-disclosure > summary:focus-visible {
+  outline: 2px solid #a996c5;
+  outline-offset: 3px;
+}
+.evaluation-panel .criterion-rule-disclosure > summary svg {
+  transition: transform 200ms ease;
+}
+.evaluation-panel .criterion-rule-disclosure[open] > summary svg {
+  transform: rotate(180deg);
+}
+.evaluation-panel .criterion-rule-disclosure > .criterion-rules {
+  padding: 3px 0 14px;
+  animation: quality-detail-reveal 220ms ease both;
+}
+@media (max-width: 520px) {
+  .evaluation-panel .checklist-preview-heading {
+    padding: 19px 18px;
+  }
+  .evaluation-panel .checklist-preview-list {
+    padding: 0 18px;
+  }
+  .evaluation-panel .checklist-preview-criterion {
+    padding: 19px 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .evaluation-panel .criterion-rule-disclosure > .criterion-rules {
+    animation: none;
+  }
+  .evaluation-panel .criterion-rule-disclosure > summary svg {
+    transition: none;
+  }
+}
+html[data-motion="off"]
+  .evaluation-panel
+  .criterion-rule-disclosure
+  > .criterion-rules,
+html[data-motion="moderate"]
+  .evaluation-panel
+  .criterion-rule-disclosure
+  > .criterion-rules {
+  animation: none;
+}
+html[data-motion="off"]
+  .evaluation-panel
+  .criterion-rule-disclosure
+  > summary
+  svg,
+html[data-motion="moderate"]
+  .evaluation-panel
+  .criterion-rule-disclosure
+  > summary
+  svg {
   transition: none;
 }

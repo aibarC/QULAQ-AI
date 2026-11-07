@@ -1,7 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function openApp(page: Page) {
+  await page.route("**/__local/annotations", route => route.fulfill({ json: {} }));
+  await page.route("**/__local/dataset", route => route.fulfill({ json: { isSuccess: true, data: { dataset_group_id: "DEV", total_records: 0, records: [] } } }));
+  const loaded = page.waitForResponse(response => response.url().endsWith("/__local/dataset"));
   await page.goto("/");
+  await loaded;
+  await expect(page.getByRole("button", { name: "Загрузить набор", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Учебный пример", exact: true })).toBeEnabled();
 }
 async function openDemo(page: Page, evaluate = false) {

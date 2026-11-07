@@ -29,6 +29,37 @@ export default defineConfig(({ mode }) => {
         name: "local-private-dataset",
         apply: "serve",
         configureServer(server) {
+          server.middlewares.use("/__local/annotations", async (req, res) => {
+            res.setHeader("Cache-Control", "no-store");
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.setHeader("X-Content-Type-Options", "nosniff");
+            const origin = req.headers.origin;
+            if (
+              req.method !== "GET" ||
+              (origin &&
+                !/^http:\/\/(localhost|127\.0\.0\.1):5173$/.test(origin))
+            ) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ error: "Forbidden" }));
+              return;
+            }
+            try {
+              res.end(
+                await readFile(
+                  fileURLToPath(
+                    new URL(
+                      "../.local/reference/annotations.json",
+                      import.meta.url,
+                    ),
+                  ),
+                  "utf8",
+                ),
+              );
+            } catch {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: "Reference file unavailable" }));
+            }
+          });
           server.middlewares.use("/__local/dataset", async (req, res) => {
             res.setHeader("Cache-Control", "no-store");
             res.setHeader("Content-Type", "application/json; charset=utf-8");

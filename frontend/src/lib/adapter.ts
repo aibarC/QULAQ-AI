@@ -400,6 +400,23 @@ export function createApiAdapter(
     evaluate: async (recordId, checklistId) => {
       // Establish a genuine baseline before any mutation; never invent API state.
       if (!latest) await request("/workspace");
+      const baselineRuns = new Map(
+        latest!.evaluations.map((run) => [run.id, JSON.stringify(run)]),
+      );
+      const knownPendingRuns = new Set<string>();
+      const observePendingRun = (workspace: Workspace) => {
+        if (
+          workspace.conversations.find((row) => row.id === recordId)?.status !==
+          "evaluating"
+        ) return;
+        // The contract has a conversation status, not a per-run status. Only
+        // its latest matching run observed in progress may reuse an existing ID.
+        const run = workspace.evaluations.filter(
+          (item) => item.recordId === recordId && item.checklist.id === checklistId,
+        ).at(-1);
+        if (run && baselineRuns.has(run.id)) knownPendingRuns.add(run.id);
+      };
+      observePendingRun(latest!);
       let initialResponseConfirmed = false;
       try {
         let workspace = await request("/evaluations", {
@@ -412,6 +429,7 @@ export function createApiAdapter(
           workspace.conversations.find((row) => row.id === recordId)?.status ===
           "evaluating"
         ) {
+          observePendingRun(workspace);
           if (Date.now() >= deadline)
             throw new AdapterStateError(
               "Оценка ещё выполняется. Обновите данные позже — новый запуск не требуется.",
@@ -433,6 +451,19 @@ export function createApiAdapter(
         if (record?.status !== "evaluated")
           throw new AdapterStateError(
             "Не удалось завершить оценку. Обновите данные и проверьте состояние сервера.",
+            workspace,
+          );
+        const confirmedRun = workspace.evaluations.some(
+          (run) => run.recordId === recordId && run.checklist.id === checklistId && (
+            !baselineRuns.has(run.id) || (
+              knownPendingRuns.has(run.id) &&
+              baselineRuns.get(run.id) !== JSON.stringify(run)
+            )
+          ),
+        );
+        if (!confirmedRun)
+          throw new AdapterStateError(
+            "Сервер не подтвердил новую оценку выбранного диалога и чек-листа. Обновите данные и проверьте историю перед повторным запуском.",
             workspace,
           );
         return workspace;

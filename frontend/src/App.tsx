@@ -1,7 +1,9 @@
 import MotionSettings from "./components/MotionSettings";
 import SplitWorkspace from "./components/SplitWorkspace";
 import ListeningStage from "./components/ListeningStage";
-import { useEffect, useRef, useState } from "react";
+import UploadTranscript from "./components/UploadTranscript";
+import ConversationRow from "./components/ConversationRow";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -9,6 +11,7 @@ import {
   Check,
   CheckCheck,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   CircleHelp,
   ClipboardCheck,
@@ -30,6 +33,17 @@ import {
   Clock3,
 } from "lucide-react";
 import { adapter, AdapterStateError } from "./lib/adapter";
+import {
+  CONVERSATION_PAGE_SIZE,
+  groupConversations,
+  sortConversations,
+} from "./lib/conversation-list";
+import "./conversation-list.css";
+import {
+  loadReferenceAnnotations,
+  buildReferenceEvaluation,
+} from "./lib/reference-preview";
+import type { ReferenceAnnotation } from "./lib/reference-preview";
 import type {
   Answer,
   Appeal,
@@ -106,6 +120,7 @@ const navItems = [
 ];
 
 export default function App() {
+  const [collapsedLanguages, setCollapsedLanguages] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<Workspace>(initialWorkspace);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -113,6 +128,18 @@ export default function App() {
   const [role, setRole] = useState<Role>(storedRole);
   const [busy, setBusy] = useState("");
   const busyRef = useRef(false);
+  const refreshPromise = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const referencePromise = useRef<Promise<void> | null>(null);
+  const [referenceAnnotations, setReferenceAnnotations] = useState<
+    Record<string, ReferenceAnnotation>
+  >({});
+  const [referenceLoading, setReferenceLoading] = useState(
+    adapter.mode === "local",
+  );
+  const [referenceError, setReferenceError] = useState("");
+  const [listChecklistId, setListChecklistId] = useState("");
+  const [evaluatingRecord, setEvaluatingRecord] = useState<string | null>(null);
   const [toast, setToast] = useState("");
   const [help, setHelp] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -129,7 +156,6 @@ export default function App() {
     "comfortable",
   );
   const [mobileMenu, setMobileMenu] = useState(false);
-  const [groupId, setGroupId] = useState("DEV");
   const [importError, setImportError] = useState("");
   const [evalError, setEvalError] = useState("");
   const [unknownEvaluation, setUnknownEvaluation] = useState<string | null>(
@@ -208,22 +234,71 @@ export default function App() {
       previous?.focus();
     };
   }, [isMobile, mobileMenu]);
-  async function refresh() {
+  function loadReferences(): Promise<void> {
+    if (referencePromise.current) return referencePromise.current;
+    setReferenceLoading(true);
+    setReferenceError("");
+    const task = (async () => {
+      try {
+        const annotations = await loadReferenceAnnotations();
+        if (mountedRef.current) setReferenceAnnotations(annotations);
+      } catch (error) {
+        if (mountedRef.current) setReferenceError(errorMessage(error));
+      } finally {
+        referencePromise.current = null;
+        if (mountedRef.current) setReferenceLoading(false);
+      }
+    })();
+    referencePromise.current = task;
+    return task;
+  }
+  function refresh(): Promise<void> {
+    if (refreshPromise.current) return refreshPromise.current;
+    if (busyRef.current) return Promise.resolve();
+    busyRef.current = true;
+    mutationEpoch.current += 1;
     setLoading(true);
     setLoadError("");
-    try {
-      setWorkspace(await adapter.load());
-    } catch (e) {
-      setLoadError(errorMessage(e));
-    } finally {
-      setLoading(false);
-    }
+    setImportError("");
+    const task = (async () => {
+      try {
+        let next = await adapter.load();
+        if (!next.conversations.some((record) => !record.demo)) {
+          if (mountedRef.current) setBusy("import");
+          try {
+            next = await adapter.importDataset("DEV");
+          } catch (error) {
+            // Keep the successfully loaded demo available if DEV cannot load.
+            if (mountedRef.current) setImportError(errorMessage(error));
+          }
+        }
+        if (mountedRef.current) setWorkspace(next);
+      } catch (error) {
+        if (mountedRef.current) setLoadError(errorMessage(error));
+      } finally {
+        mutationEpoch.current += 1;
+        busyRef.current = false;
+        refreshPromise.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+          setBusy("");
+        }
+      }
+    })();
+    refreshPromise.current = task;
+    return task;
   }
   useEffect(() => {
+    mountedRef.current = true;
     void refresh();
+    if (adapter.mode === "local") void loadReferences();
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
   useEffect(() => {
     const handler = () => {
+      if (location.hash === lastHash.current) return;
       if (
         dirtyRef.current &&
         !confirm(
@@ -289,7 +364,11 @@ export default function App() {
     setHighlighted([]);
     setEvalError("");
     setMobileMenu(false);
-    location.hash = `/${next.page}${next.id ? "/" + encodeURIComponent(next.id) : ""}${next.evaluationId ? "?evaluation=" + encodeURIComponent(next.evaluationId) : ""}`;
+    const hash = `#/${next.page}${next.id ? "/" + encodeURIComponent(next.id) : ""}${next.evaluationId ? "?evaluation=" + encodeURIComponent(next.evaluationId) : ""}`;
+    lastHash.current = hash;
+    setRoute(next);
+    location.hash = hash;
+    window.scrollTo({ top: 0 });
   }
   function switchRole(next: Role) {
     if (next === role) return;
@@ -333,16 +412,16 @@ export default function App() {
       setBusy("");
     }
   }
-  async function importData() {
+  async function importData(datasetId = "DEV") {
     setImportError("");
     try {
       const next = await mutate(
         "import",
-        () => adapter.importDataset(groupId),
+        () => adapter.importDataset(datasetId),
         "Набор загружен",
       );
       setToast(
-        `Загружено ${next.conversations.filter((c) => !c.demo).length} диалогов. Оценки ещё не запускались.`,
+        `Набор обновлён: ${next.conversations.filter((c) => !c.demo).length} диалогов.`,
       );
     } catch (e) {
       setImportError(errorMessage(e));
@@ -375,11 +454,44 @@ export default function App() {
     };
   }, [hasRunning]);
   const demo = workspace.conversations.find((c) => c.demo);
-  const real = workspace.conversations.filter((c) => !c.demo);
+  const real = sortConversations(
+    workspace.conversations.filter((c) => !c.demo),
+  );
+  const listChecklist =
+    workspace.checklists.find((item) => item.id === listChecklistId) ||
+    workspace.checklists[0];
+  const orderedChecklists = listChecklist
+    ? [
+        listChecklist,
+        ...workspace.checklists.filter((item) => item.id !== listChecklist.id),
+      ]
+    : workspace.checklists;
   const pending = workspace.appeals.filter(
     (a) => a.status === "pending",
   ).length;
   const conversation = workspace.conversations.find((c) => c.id === route.id);
+  const localReferenceMode =
+    adapter.mode === "local" && !!conversation && !conversation.demo;
+  const referenceResults = useMemo(() => {
+    const results = new Map<string, Evaluation>();
+    if (adapter.mode !== "local" || !workspace.checklists[0]) return results;
+    for (const record of workspace.conversations) {
+      const annotation = referenceAnnotations[record.externalId];
+      if (!record.demo && annotation) {
+        results.set(
+          record.id,
+          buildReferenceEvaluation(record, workspace.checklists[0], annotation),
+        );
+      }
+    }
+    return results;
+  }, [workspace.conversations, workspace.checklists, referenceAnnotations]);
+  const previewEvaluation = conversation
+    ? referenceResults.get(conversation.id)
+    : undefined;
+  const hasActualEvaluation =
+    !!conversation &&
+    workspace.evaluations.some((item) => item.recordId === conversation.id);
   const activeAppeal = workspace.appeals.find((a) => a.id === route.id);
   const latestEval = (id: string) =>
     workspace.evaluations.filter((e) => e.recordId === id).at(-1);
@@ -391,9 +503,16 @@ export default function App() {
       (channel === "all" || c.channel === channel) &&
       (status === "all" || c.status === status),
   );
-  const pages = Math.max(1, Math.ceil(filtered.length / 12));
+  const pages = Math.max(
+    1,
+    Math.ceil(filtered.length / CONVERSATION_PAGE_SIZE),
+  );
   const currentPage = Math.min(page, pages);
-  const rows = filtered.slice((currentPage - 1) * 12, currentPage * 12);
+  const rows = filtered.slice(
+    (currentPage - 1) * CONVERSATION_PAGE_SIZE,
+    currentPage * CONVERSATION_PAGE_SIZE,
+  );
+  const rowGroups = groupConversations(rows);
   const appealRows = workspace.appeals
     .filter((a) => appealFilter === "all" || a.status === appealFilter)
     .sort((a, b) =>
@@ -416,6 +535,51 @@ export default function App() {
               ? "Апелляции"
               : "Мои апелляции";
   const openAppeal = (id: string) => go({ page: "appeal", id });
+  async function evaluateConversation(
+    recordId: string,
+    checklistId: string,
+    openDetail = false,
+  ) {
+    const record = workspace.conversations.find((item) => item.id === recordId);
+    if (
+      busyRef.current ||
+      !record ||
+      record.status === "evaluating" ||
+      unknownEvaluation === recordId ||
+      !workspace.checklists.some((item) => item.id === checklistId)
+    )
+      return;
+    if (openDetail) go({ page: "dialog", id: recordId });
+    setEvalError("");
+    setEvaluatingRecord(recordId);
+    try {
+      const next = await mutate(
+        "evaluate",
+        () => adapter.evaluate(recordId, checklistId),
+        "Оценка готова",
+      );
+      const last = next.evaluations
+        .filter((item) => item.recordId === recordId)
+        .at(-1);
+      const current = readRoute();
+      if (last && current.page === "dialog" && current.id === recordId) {
+        go({ ...current, evaluationId: last.id });
+      }
+    } catch (error) {
+      if (error instanceof AdapterStateError && error.outcomeUnknown) {
+        setUnknownEvaluation(recordId);
+      }
+      const current = readRoute();
+      if (current.page === "dialog" && current.id === recordId) {
+        setEvalError(errorMessage(error));
+      } else {
+        setToast(`Анализ ${record.externalId}: ${errorMessage(error)}`);
+      }
+    } finally {
+      setEvaluatingRecord(null);
+    }
+  }
+
   async function sendAppeal() {
     if (!appealDraft || !comment.trim()) return;
     setFormError("");
@@ -732,7 +896,7 @@ export default function App() {
                       <ArrowUpRight size={15} />
                     </button>
                   </div>
-                  {real.length > 0 && (
+                  {real.length > 0 && adapter.mode === "api" && (
                     <SignalOverview
                       conversations={real}
                       selected={status}
@@ -757,6 +921,7 @@ export default function App() {
                       }}
                     />
                   )}
+                  <UploadTranscript />
                   <div className="dataset-bar panel">
                     <div className="dataset-label">
                       <span className="dataset-icon">
@@ -774,20 +939,9 @@ export default function App() {
                       </div>
                     </div>
                     <div className="dataset-controls">
-                      <label htmlFor="dataset-group">Набор</label>
-                      <input
-                        id="dataset-group"
-                        name="groupId"
-                        autoComplete="off"
-                        spellCheck={false}
-                        value={groupId}
-                        maxLength={80}
-                        onChange={(e) => setGroupId(e.target.value)}
-                        className="input"
-                      />
                       <button
                         className="button primary"
-                        disabled={!!busy || !groupId.trim()}
+                        disabled={!!busy}
                         onClick={() => void importData()}
                       >
                         {busy === "import" ? <Spinner /> : <Plus size={17} />}{" "}
@@ -799,7 +953,20 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  {importError && <ErrorBox>{importError}</ErrorBox>}
+                  {importError && (
+                    <div className="dataset-import-error">
+                      <ErrorBox>{importError}</ErrorBox>
+                      <button
+                        className="button secondary small"
+                        disabled={!!busy}
+                        onClick={() => {
+                          void importData("DEV");
+                        }}
+                      >
+                        Повторить загрузку
+                      </button>
+                    </div>
+                  )}
                   {real.length > 0 ? (
                     <>
                       <div className="dataset-summary">
@@ -835,6 +1002,65 @@ export default function App() {
                         className="dialog-table panel"
                         aria-label="Список диалогов"
                       >
+                        <div className="conversation-analysis-bar">
+                          <div>
+                            <strong>
+                              {adapter.mode === "local"
+                                ? "Результаты из предоставленного Excel"
+                                : "Анализ каждого разговора"}
+                            </strong>
+                            <p>
+                              {adapter.mode === "local"
+                                ? referenceLoading
+                                  ? "Загружаем готовый разбор. Сервер оценки не запускается."
+                                  : "Откройте диалог, чтобы посмотреть готовые ответы и объяснения. Это предпросмотр, backend не запускался."
+                                : "Выберите чек-лист и запустите анализ нужного диалога. Результат появится в его карточке."}
+                            </p>
+                          </div>
+                          {adapter.mode === "local" ? (
+                            <span className="preview-source-pill">
+                              <FileCheck2 size={15} /> Excel · предпросмотр
+                            </span>
+                          ) : (
+                            <label>
+                              Чек-лист
+                              <select
+                                className="select"
+                                aria-label="Чек-лист для анализа диалогов"
+                                value={listChecklist?.id || ""}
+                                disabled={
+                                  !!busy || !workspace.checklists.length
+                                }
+                                onChange={(event) =>
+                                  setListChecklistId(event.target.value)
+                                }
+                              >
+                                {!workspace.checklists.length && (
+                                  <option value="">
+                                    Нет доступного чек-листа
+                                  </option>
+                                )}
+                                {workspace.checklists.map((item) => (
+                                  <option key={item.id} value={item.id}>
+                                    {item.name} · v{item.version}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+                        </div>
+                        {adapter.mode === "local" && referenceError && (
+                          <div className="reference-load-error">
+                            <ErrorBox>{referenceError}</ErrorBox>
+                            <button
+                              className="button secondary small"
+                              disabled={referenceLoading}
+                              onClick={() => void loadReferences()}
+                            >
+                              Повторить загрузку результатов
+                            </button>
+                          </div>
+                        )}
                         <div className="table-toolbar">
                           <div className="search-field">
                             <Search size={18} />
@@ -900,17 +1126,19 @@ export default function App() {
                               <option>KZ</option>
                               <option>EN</option>
                             </select>
-                            <select
-                              aria-label="Фильтр по статусу"
-                              value={status}
-                              onChange={(e) => setStatus(e.target.value)}
-                            >
-                              <option value="all">Все статусы</option>
-                              <option value="unrated">Не оценён</option>
-                              <option value="evaluating">Оценивается</option>
-                              <option value="evaluated">Оценён</option>
-                              <option value="error">Ошибка</option>
-                            </select>
+                            {adapter.mode === "api" && (
+                              <select
+                                aria-label="Фильтр по статусу"
+                                value={status}
+                                onChange={(e) => setStatus(e.target.value)}
+                              >
+                                <option value="all">Все статусы</option>
+                                <option value="unrated">Не оценён</option>
+                                <option value="evaluating">Оценивается</option>
+                                <option value="evaluated">Оценён</option>
+                                <option value="error">Ошибка</option>
+                              </select>
+                            )}
                           </div>
                         </div>
                         <div className="table-scroll">
@@ -920,92 +1148,189 @@ export default function App() {
                                 <th>Диалог</th>
                                 <th>Канал</th>
                                 <th>Язык</th>
-                                <th>Статус оценки</th>
-                                <th>Итог</th>
                                 <th>
-                                  <span className="sr-only">
-                                    Открыть диалог
-                                  </span>
+                                  {adapter.mode === "local"
+                                    ? "Источник результата"
+                                    : "Статус оценки"}
+                                </th>
+                                <th>
+                                  {adapter.mode === "local"
+                                    ? "Результат"
+                                    : "Анализ"}
                                 </th>
                               </tr>
                             </thead>
-                            <tbody>
-                              {rows.map((c) => (
-                                <tr
-                                  key={c.id}
-                                  onClick={() =>
-                                    go({ page: "dialog", id: c.id })
-                                  }
-                                >
-                                  <td>
-                                    <div className="conversation-cell">
-                                      <div
-                                        className={`channel-symbol ${c.channel === "voice call" ? "voice" : ""}`}
-                                      >
-                                        <ChannelIcon channel={c.channel} />
-                                      </div>
-                                      <div>
-                                        <button
-                                          className="row-link"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            go({ page: "dialog", id: c.id });
-                                          }}
-                                        >
-                                          {c.externalId}
-                                        </button>
-                                        <p>
-                                          {c.messages.find(
-                                            (m) => m.speaker === "client",
-                                          )?.text ||
-                                            c.messages[0]?.text ||
-                                            "Транскрипт"}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td>
-                                    {c.channel === "voice call"
-                                      ? "Звонок"
-                                      : "Чат"}
-                                  </td>
-                                  <td>
-                                    <span
-                                      className={`language-chip ${c.language.toLowerCase()}`}
+                            {rowGroups.map((group) => (
+                              <tbody
+                                key={group.language}
+                                aria-label={`${group.label} · ${group.language}`}
+                              >
+                                <tr className="language-group-row">
+                                  <th colSpan={5} scope="rowgroup">
+                                    <button
+                                      className="language-group-toggle"
+                                      aria-expanded={
+                                        !collapsedLanguages.includes(
+                                          group.language,
+                                        )
+                                      }
+                                      aria-label={`${collapsedLanguages.includes(group.language) ? "Развернуть" : "Свернуть"} ${group.language}`}
+                                      onClick={() =>
+                                        setCollapsedLanguages((current) =>
+                                          current.includes(group.language)
+                                            ? current.filter(
+                                                (language) =>
+                                                  language !== group.language,
+                                              )
+                                            : [...current, group.language],
+                                        )
+                                      }
                                     >
-                                      {c.language}
-                                    </span>
-                                  </td>
-                                  <td>
-                                    <StatusBadge status={c.status} />
-                                    {workspace.appeals.some(
-                                      (a) =>
-                                        a.recordId === c.id &&
-                                        a.status === "pending",
-                                    ) && (
-                                      <span className="row-appeal">
-                                        Открытых апелляций:{" "}
-                                        {
-                                          workspace.appeals.filter(
-                                            (a) =>
-                                              a.recordId === c.id &&
-                                              a.status === "pending",
-                                          ).length
-                                        }
+                                      <ChevronDown size={18} />
+                                      <strong>
+                                        {group.label} · {group.language}
+                                      </strong>
+                                      <span>
+                                        {group.conversations.length} диалогов
                                       </span>
-                                    )}
-                                  </td>
-                                  <td className="table-score">
-                                    {scoreLabel(
-                                      latestEval(c.id)?.total ?? null,
-                                    )}
-                                  </td>
-                                  <td>
-                                    <ArrowUpRight size={16} />
-                                  </td>
+                                      <small>
+                                        {collapsedLanguages.includes(
+                                          group.language,
+                                        )
+                                          ? "Развернуть"
+                                          : "Свернуть"}
+                                      </small>
+                                    </button>
+                                  </th>
                                 </tr>
-                              ))}
-                            </tbody>
+                                {group.conversations.map((c) => (
+                                  <ConversationRow
+                                    collapsed={collapsedLanguages.includes(
+                                      group.language,
+                                    )}
+                                    key={c.id}
+                                    onClick={() =>
+                                      go({ page: "dialog", id: c.id })
+                                    }
+                                  >
+                                    <td>
+                                      <div className="conversation-cell">
+                                        <div
+                                          className={`channel-symbol ${c.channel === "voice call" ? "voice" : ""}`}
+                                        >
+                                          <ChannelIcon channel={c.channel} />
+                                        </div>
+                                        <div>
+                                          <button
+                                            className="row-link"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              go({
+                                                page: "dialog",
+                                                id: c.id,
+                                              });
+                                            }}
+                                          >
+                                            {c.externalId}
+                                          </button>
+                                          <p>
+                                            {c.messages.find(
+                                              (m) => m.speaker === "client",
+                                            )?.text ||
+                                              c.messages[0]?.text ||
+                                              "Транскрипт"}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td>
+                                      {c.channel === "voice call"
+                                        ? "Звонок"
+                                        : "Чат"}
+                                    </td>
+                                    <td>
+                                      <span
+                                        className={`language-chip ${c.language.toLowerCase()}`}
+                                      >
+                                        {c.language}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      {adapter.mode === "local" &&
+                                      !latestEval(c.id) ? (
+                                        <span
+                                          className={`badge ${referenceResults.has(c.id) ? "reference-row-source" : "quiet"}`}
+                                        >
+                                          {referenceResults.has(c.id)
+                                            ? "Excel · предпросмотр"
+                                            : referenceLoading
+                                              ? "Загружаем…"
+                                              : "Нет разметки"}
+                                        </span>
+                                      ) : (
+                                        <StatusBadge status={c.status} />
+                                      )}
+                                      {workspace.appeals.some(
+                                        (a) =>
+                                          a.recordId === c.id &&
+                                          a.status === "pending",
+                                      ) && (
+                                        <span className="row-appeal">
+                                          Открытых апелляций:{" "}
+                                          {
+                                            workspace.appeals.filter(
+                                              (a) =>
+                                                a.recordId === c.id &&
+                                                a.status === "pending",
+                                            ).length
+                                          }
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td>
+                                      <button
+                                        className="row-analyze button secondary small"
+                                        aria-label={`${adapter.mode === "local" ? "Посмотреть результат" : "Анализировать"} ${c.externalId}`}
+                                        disabled={
+                                          adapter.mode !== "local" &&
+                                          (!!busy ||
+                                            !listChecklist ||
+                                            c.status === "evaluating" ||
+                                            unknownEvaluation === c.id)
+                                        }
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          if (adapter.mode === "local")
+                                            go({ page: "dialog", id: c.id });
+                                          else if (listChecklist)
+                                            void evaluateConversation(
+                                              c.id,
+                                              listChecklist.id,
+                                              true,
+                                            );
+                                        }}
+                                      >
+                                        {adapter.mode === "local" ? (
+                                          <FileCheck2 size={14} />
+                                        ) : evaluatingRecord === c.id &&
+                                          busy === "evaluate" ? (
+                                          <Spinner />
+                                        ) : (
+                                          <Sparkles size={14} />
+                                        )}
+                                        {adapter.mode === "local"
+                                          ? "Посмотреть результат"
+                                          : c.status === "evaluating" ||
+                                              (evaluatingRecord === c.id &&
+                                                busy === "evaluate")
+                                            ? "Анализируем…"
+                                            : "Анализировать"}
+                                      </button>
+                                    </td>
+                                  </ConversationRow>
+                                ))}
+                              </tbody>
+                            ))}
                           </table>
                         </div>
                         {filtered.length === 0 && (
@@ -1032,20 +1357,23 @@ export default function App() {
                         <footer className="table-footer">
                           <span>
                             {filtered.length
-                              ? `${(currentPage - 1) * 12 + 1}–${Math.min(currentPage * 12, filtered.length)} из ${filtered.length}`
+                              ? `${(currentPage - 1) * CONVERSATION_PAGE_SIZE + 1}–${Math.min(currentPage * CONVERSATION_PAGE_SIZE, filtered.length)} из ${filtered.length}`
                               : "0 диалогов"}
                           </span>
-                          <div className="pagination">
-                            <button
-                              className="icon-button"
-                              disabled={currentPage === 1}
-                              aria-label="Предыдущая страница"
-                              onClick={() => setPage(currentPage - 1)}
-                            >
-                              <ChevronLeft size={16} />
-                            </button>
-                            {Array.from({ length: pages }, (_, i) => i + 1).map(
-                              (n) => (
+                          {pages > 1 && (
+                            <div className="pagination">
+                              <button
+                                className="icon-button"
+                                disabled={currentPage === 1}
+                                aria-label="Предыдущая страница"
+                                onClick={() => setPage(currentPage - 1)}
+                              >
+                                <ChevronLeft size={16} />
+                              </button>
+                              {Array.from(
+                                { length: pages },
+                                (_, i) => i + 1,
+                              ).map((n) => (
                                 <button
                                   key={n}
                                   aria-label={`Страница ${n}`}
@@ -1057,17 +1385,17 @@ export default function App() {
                                 >
                                   {n}
                                 </button>
-                              ),
-                            )}
-                            <button
-                              className="icon-button"
-                              disabled={currentPage === pages}
-                              aria-label="Следующая страница"
-                              onClick={() => setPage(currentPage + 1)}
-                            >
-                              <ChevronRight size={16} />
-                            </button>
-                          </div>
+                              ))}
+                              <button
+                                className="icon-button"
+                                disabled={currentPage === pages}
+                                aria-label="Следующая страница"
+                                onClick={() => setPage(currentPage + 1)}
+                              >
+                                <ChevronRight size={16} />
+                              </button>
+                            </div>
+                          )}
                         </footer>
                       </section>
                     </>
@@ -1134,13 +1462,20 @@ export default function App() {
                           {conversation.messages.length} реплик
                         </p>
                       </div>
-                      <StatusBadge
-                        status={
-                          busy === "evaluate"
-                            ? "evaluating"
-                            : conversation.status
-                        }
-                      />
+                      {previewEvaluation && !hasActualEvaluation ? (
+                        <span className="preview-source-pill">
+                          Excel · предпросмотр
+                        </span>
+                      ) : (
+                        <StatusBadge
+                          status={
+                            busy === "evaluate" &&
+                            evaluatingRecord === conversation.id
+                              ? "evaluating"
+                              : conversation.status
+                          }
+                        />
+                      )}
                     </div>
                     {conversation.demo && (
                       <div className="context-note">
@@ -1158,64 +1493,77 @@ export default function App() {
                         highlighted={highlighted}
                         onClear={() => setHighlighted([])}
                       />
-                      <EvaluationPanel
-                        conversation={conversation}
-                        checklists={workspace.checklists}
-                        evaluations={workspace.evaluations.filter(
-                          (e) => e.recordId === conversation.id,
-                        )}
-                        selectedId={route.evaluationId || ""}
-                        onSelect={(id) => go({ ...route, evaluationId: id })}
-                        appeals={workspace.appeals}
-                        evaluating={
-                          busy === "evaluate" ||
-                          conversation.status === "evaluating"
-                        }
-                        needsRefresh={unknownEvaluation === conversation.id}
-                        onRefresh={async () => {
-                          setEvalError("");
-                          try {
-                            setWorkspace(await adapter.load());
-                            setUnknownEvaluation(null);
-                          } catch (e) {
-                            setEvalError(errorMessage(e));
+                      {localReferenceMode &&
+                      !previewEvaluation &&
+                      !hasActualEvaluation ? (
+                        <section
+                          className="panel reference-preview-state"
+                          aria-label="Предпросмотр результата"
+                        >
+                          {referenceLoading ? (
+                            <>
+                              <Spinner />
+                              <h2>Загружаем готовый разбор</h2>
+                              <p>
+                                Ответы и объяснения из предоставленного Excel.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <h2>Предпросмотр недоступен</h2>
+                              <ErrorBox>
+                                {referenceError ||
+                                  `Для ${conversation.externalId} нет результата в предоставленном файле.`}
+                              </ErrorBox>
+                              <button
+                                className="button secondary"
+                                onClick={() => void loadReferences()}
+                              >
+                                Повторить загрузку результатов
+                              </button>
+                            </>
+                          )}
+                        </section>
+                      ) : (
+                        <EvaluationPanel
+                          key={conversation.id}
+                          conversation={conversation}
+                          previewEvaluation={previewEvaluation}
+                          checklists={orderedChecklists}
+                          evaluations={workspace.evaluations.filter(
+                            (e) => e.recordId === conversation.id,
+                          )}
+                          selectedId={route.evaluationId || ""}
+                          onSelect={(id) => go({ ...route, evaluationId: id })}
+                          appeals={workspace.appeals}
+                          evaluating={
+                            (busy === "evaluate" &&
+                              evaluatingRecord === conversation.id) ||
+                            conversation.status === "evaluating"
                           }
-                        }}
-                        error={evalError}
-                        onEvaluate={async (id) => {
-                          setEvalError("");
-                          try {
-                            const next = await mutate(
-                              "evaluate",
-                              () => adapter.evaluate(conversation.id, id),
-                              "Оценка готова",
-                            );
-                            const last = next.evaluations
-                              .filter((e) => e.recordId === conversation.id)
-                              .at(-1);
-                            if (
-                              last &&
-                              readRoute().page === "dialog" &&
-                              readRoute().id === conversation.id
-                            )
-                              go({ ...route, evaluationId: last.id });
-                          } catch (e) {
-                            if (
-                              e instanceof AdapterStateError &&
-                              e.outcomeUnknown
-                            )
-                              setUnknownEvaluation(conversation.id);
-                            setEvalError(errorMessage(e));
-                          }
-                        }}
-                        onEvidence={(ids) => setHighlighted([...ids])}
-                        onAppeal={(evaluation, criterion) => {
-                          setAppealDraft({ evaluation, criterion });
-                          setComment("");
-                          setFormError("");
-                        }}
-                        onOpenAppeal={openAppeal}
-                      />
+                          needsRefresh={unknownEvaluation === conversation.id}
+                          onRefresh={async () => {
+                            setEvalError("");
+                            try {
+                              setWorkspace(await adapter.load());
+                              setUnknownEvaluation(null);
+                            } catch (e) {
+                              setEvalError(errorMessage(e));
+                            }
+                          }}
+                          error={evalError}
+                          onEvaluate={(id) => {
+                            void evaluateConversation(conversation.id, id);
+                          }}
+                          onEvidence={(ids) => setHighlighted([...ids])}
+                          onAppeal={(evaluation, criterion) => {
+                            setAppealDraft({ evaluation, criterion });
+                            setComment("");
+                            setFormError("");
+                          }}
+                          onOpenAppeal={openAppeal}
+                        />
+                      )}
                     </SplitWorkspace>
                   </>
                 ) : (

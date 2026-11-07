@@ -1,12 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 const demoStorageKey = "qulaq:teaching-workspace:v1";
 async function openApp(page: Page) {
+  await page.route("**/__local/annotations", route => route.fulfill({ json: {} }));
+  const loaded = page.waitForResponse(response => response.url().endsWith("/__local/dataset"));
   await page.goto("/");
+  await loaded;
   await expect(
     page.getByRole("heading", { name: "Диалоги", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Загрузить набор", exact: true }),
+    page.getByRole("button", { name: "Обновить набор", exact: true }),
   ).toBeEnabled();
 }
 async function openDemo(page: Page) {
@@ -29,20 +32,16 @@ async function evaluateDemo(page: Page) {
     }),
   ).toBeVisible();
 }
-test("real DEV import: 65 records, filters, no fabricated scores, errors preserve data", async ({
+test("real DEV autoload: 65 records, filters, no fabricated scores, errors preserve data", async ({
   page,
 }) => {
   await openApp(page);
-  await expect(
-    page.getByText("Набор ещё не загружен", { exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Загрузить набор", exact: true })
-    .click();
   await expect(page.locator(".count-badge").first()).toHaveText("65");
-  await expect(page.locator(".table-footer")).toContainText("1–12 из 65");
-  await expect(page.locator("tbody tr")).toHaveCount(12);
-  await expect(page.locator(".table-score").first()).toHaveText("—");
+  await expect(page.locator(".table-footer")).toContainText("1–65 из 65");
+  await expect(page.locator(".row-link")).toHaveCount(65);
+  expect(await page.locator("tbody").evaluateAll(elements => elements.map(element => element.getAttribute("aria-label")))).toEqual(["Русский · RU", "Қазақша · KZ", "English · EN"]);
+  await expect(page.getByRole("button", { name: /^Посмотреть результат / })).toHaveCount(65);
+  await expect(page.locator(".table-score")).toHaveCount(0);
   await expect(page.locator("tbody .status.evaluated")).toHaveCount(0);
   for (const [language, count] of [
     ["RU", 35],
@@ -58,16 +57,14 @@ test("real DEV import: 65 records, filters, no fabricated scores, errors preserv
   await page.getByLabel("Фильтр по языку").selectOption("all");
   await page.getByLabel("Фильтр по каналу").selectOption("voice call");
   await expect(page.locator(".table-footer")).toContainText("1–5 из 5");
-  await expect(page.locator("tbody tr")).toHaveCount(5);
+  await expect(page.locator(".row-link")).toHaveCount(5);
   await page.locator(".row-link").first().click();
   await expect(
     page.getByRole("region", { name: "Транскрипт диалога" }),
   ).toBeVisible();
   await expect(page.locator("audio")).toHaveCount(1);
-  await page.getByRole("button", { name: "Оценить", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Для оценки реальных диалогов подключите сервер",
-  );
+  await expect(page.getByRole("heading", { name: "Предпросмотр недоступен", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("нет результата в предоставленном файле");
   await expect(page.locator(".score-card")).toHaveCount(0);
   await expect(page.locator(".message").first()).toBeVisible();
   await page.getByRole("button", { name: "К диалогам", exact: true }).click();
@@ -79,7 +76,7 @@ test("real DEV import: 65 records, filters, no fabricated scores, errors preserv
     .click();
   await expect(page.getByRole("alert")).toContainText("Сервер недоступен");
   await expect(page.locator(".count-badge").first()).toHaveText("65");
-  await expect(page.locator("tbody tr")).toHaveCount(5);
+  await expect(page.locator(".row-link")).toHaveCount(5);
   expect(
     await page.evaluate((key) => {
       const raw = sessionStorage.getItem(key);

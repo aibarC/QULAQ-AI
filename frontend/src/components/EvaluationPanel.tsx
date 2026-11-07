@@ -29,6 +29,47 @@ import {
   Spinner,
 } from "./Shared";
 import "./evaluation-motion.css";
+import ExportEvaluation from "./ExportEvaluation";
+
+function CriterionRules({ criterion }: { criterion: Criterion }) {
+  return (
+    <div className="criterion-rules">
+      <div className="criterion-rule-meta">
+        <span>
+          {criterion.type === "scale"
+            ? "Шкала"
+            : criterion.type === "flag"
+              ? "Флаг нарушения"
+              : "Да / Нет"}
+        </span>
+        <span>Вес: {criterion.weight}</span>
+      </div>
+      <p className="criterion-rule-description">
+        {criterion.description || "Описание критерия не указано."}
+      </p>
+      {criterion.type === "scale" && (
+        <dl className="criterion-scale" aria-label="Значения шкалы">
+          {criterion.scale.map((option) => (
+            <div key={option.value}>
+              <dt>{option.value}</dt>
+              <dd>{option.label}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <p
+        className={`criterion-rule-na ${criterion.allowNA ? "is-allowed" : ""}`}
+      >
+        <strong>
+          {criterion.allowNA ? "N/A допустимо" : "N/A не предусмотрено"}
+        </strong>
+        {criterion.allowNA && (
+          <span>{criterion.naCondition || "Условие N/A не указано."}</span>
+        )}
+      </p>
+    </div>
+  );
+}
 
 function ScoreRing({ total }: { total: number | null }) {
   const amount = total === null ? null : Math.min(100, Math.max(0, total));
@@ -78,6 +119,7 @@ interface Props {
   conversation: Conversation;
   checklists: Checklist[];
   evaluations: Evaluation[];
+  previewEvaluation?: Evaluation;
   selectedId: string;
   onSelect: (id: string) => void;
   appeals: Appeal[];
@@ -94,8 +136,10 @@ export default function EvaluationPanel(p: Props) {
   const [checklistId, setChecklistId] = useState(p.checklists[0]?.id || "");
   const [filter, setFilter] = useState("all");
   const [collapsed, setCollapsed] = useState<string[]>([]);
-  const evaluation =
+  const actualEvaluation =
     p.evaluations.find((e) => e.id === p.selectedId) || p.evaluations.at(-1);
+  const isPreview = !actualEvaluation && !!p.previewEvaluation;
+  const evaluation = actualEvaluation || p.previewEvaluation;
   const chosen =
     p.checklists.find((c) => c.id === checklistId) || p.checklists[0];
   const isIssue = (r: CriterionResult) => {
@@ -108,18 +152,19 @@ export default function EvaluationPanel(p: Props) {
         ? r.answer === true
         : r.answer === false ||
           (typeof r.answer === "number" &&
-            r.points !== null &&
-            r.points < (criterion?.weight || 0)))
+            !!criterion?.scale.length &&
+            r.answer < Math.max(...criterion.scale.map((item) => item.value))))
     );
   };
   useEffect(() => {
+    if (isPreview) setFilter("all");
     if (evaluation)
       setCollapsed(
         evaluation.results
           .filter((r) => !isIssue(r) && !r.override && r.answer !== null)
           .map((r) => r.criterionId),
       );
-  }, [evaluation?.id]);
+  }, [evaluation?.id, isPreview]);
   const results =
     evaluation?.results.filter(
       (r) =>
@@ -128,18 +173,7 @@ export default function EvaluationPanel(p: Props) {
           ? r.answer === null
           : filter === "changed"
             ? !!r.override
-            : r.answer !== null &&
-              (() => {
-                const c = evaluation.checklist.criteria.find(
-                  (c) => c.id === r.criterionId,
-                );
-                return c?.type === "flag"
-                  ? r.answer === true
-                  : r.answer === false ||
-                      (typeof r.answer === "number" &&
-                        r.points !== null &&
-                        r.points < (c?.weight || 0));
-              })()),
+            : isIssue(r)),
     ) || [];
   results.sort(
     (a, b) =>
@@ -170,49 +204,55 @@ export default function EvaluationPanel(p: Props) {
       <div className="panel evaluate-control">
         <div className="panel-heading">
           <div>
-            <h2>Оценка качества</h2>
-            <span>По выбранному чек-листу</span>
+            <h2>{isPreview ? "Предпросмотр оценки" : "Оценка качества"}</h2>
+            <span>
+              {isPreview
+                ? `${evaluation!.checklist.name} · v${evaluation!.checklist.version}`
+                : "По выбранному чек-листу"}
+            </span>
           </div>
           <Sparkles size={21} />
         </div>
-        <div className="evaluation-actions">
-          <label className="sr-only" htmlFor="evaluation-checklist">
-            Чек-лист для оценки
-          </label>
-          <select
-            id="evaluation-checklist"
-            className="select"
-            value={chosen?.id || ""}
-            onChange={(e) => setChecklistId(e.target.value)}
-            disabled={p.evaluating}
-          >
-            {p.checklists.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} · v{c.version}
-              </option>
-            ))}
-          </select>
-          <button
-            className="button primary"
-            disabled={p.evaluating || p.needsRefresh || !chosen}
-            onClick={() => p.onEvaluate(chosen.id)}
-          >
-            {p.evaluating ? (
-              <Spinner />
-            ) : evaluation ? (
-              <RotateCcw size={16} />
-            ) : (
-              <Sparkles size={16} />
-            )}{" "}
-            {p.evaluating
-              ? "Оцениваем…"
-              : evaluation
-                ? "Оценить заново"
-                : "Оценить"}
-          </button>
-        </div>
-        {p.error && <ErrorBox>{p.error}</ErrorBox>}
-        {p.needsRefresh && (
+        {!isPreview && (
+          <div className="evaluation-actions">
+            <label className="sr-only" htmlFor="evaluation-checklist">
+              Чек-лист для оценки
+            </label>
+            <select
+              id="evaluation-checklist"
+              className="select"
+              value={chosen?.id || ""}
+              onChange={(e) => setChecklistId(e.target.value)}
+              disabled={p.evaluating}
+            >
+              {p.checklists.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} · v{c.version}
+                </option>
+              ))}
+            </select>
+            <button
+              className="button primary"
+              disabled={p.evaluating || p.needsRefresh || !chosen}
+              onClick={() => p.onEvaluate(chosen.id)}
+            >
+              {p.evaluating ? (
+                <Spinner />
+              ) : evaluation ? (
+                <RotateCcw size={16} />
+              ) : (
+                <Sparkles size={16} />
+              )}{" "}
+              {p.evaluating
+                ? "Оцениваем…"
+                : evaluation
+                  ? "Оценить заново"
+                  : "Оценить"}
+            </button>
+          </div>
+        )}
+        {!isPreview && p.error && <ErrorBox>{p.error}</ErrorBox>}
+        {!isPreview && p.needsRefresh && (
           <div className="reconcile-state" role="status">
             <p>
               Результат запроса неизвестен. Проверьте состояние перед новым
@@ -224,7 +264,7 @@ export default function EvaluationPanel(p: Props) {
           </div>
         )}
       </div>
-      {p.evaluating && (
+      {!isPreview && p.evaluating && (
         <div className="evaluation-loading panel quality-loading" role="status">
           <div className="quality-activity" aria-hidden="true">
             <div className="quality-activity-orbit">
@@ -272,39 +312,71 @@ export default function EvaluationPanel(p: Props) {
           )}
         </div>
       )}
-      {!evaluation && !p.evaluating && (
+      {!evaluation && chosen && (
+        <section
+          className="panel checklist-preview"
+          aria-label="Полный чек-лист перед оценкой"
+        >
+          <div className="checklist-preview-heading">
+            <span className="checklist-preview-eyebrow">
+              <ListChecks size={15} /> Правила оценки
+            </span>
+            <h3>{chosen.name}</h3>
+            <div className="checklist-preview-meta">
+              <span>Версия {chosen.version}</span>
+              <span>{chosen.criteria.length} критериев</span>
+            </div>
+            <p>
+              Весь чек-лист доступен до запуска. Баллы, объяснения и
+              доказательства появятся после оценки.
+            </p>
+          </div>
+          <ol className="checklist-preview-list">
+            {chosen.criteria.map((criterion, index) => (
+              <li className="checklist-preview-criterion" key={criterion.id}>
+                <div className="checklist-preview-title">
+                  <span aria-hidden="true">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <h4>{criterion.name}</h4>
+                </div>
+                <CriterionRules criterion={criterion} />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {!evaluation && !chosen && !p.evaluating && (
         <div className="panel">
           <Empty
             icon={<ListChecks size={28} />}
             title="Всё начинается с оценки"
-            action={
-              <div className="criteria-preview">
-                {chosen?.criteria.slice(0, 4).map((c) => (
-                  <span key={c.id}>
-                    <CircleDashed size={14} />
-                    {c.name}
-                  </span>
-                ))}
-                <span className="muted">
-                  {chosen?.criteria.length || 0} критериев в чек-листе
-                </span>
-              </div>
-            }
           >
-            Выберите чек-лист и нажмите «Оценить». Здесь появятся результат и
-            доказательства по каждому критерию.
+            Создайте чек-лист во вкладке «Чек-листы», затем вернитесь к оценке.
           </Empty>
         </div>
       )}
       {evaluation && (
         <>
-          {evaluation.demo && (
+          {isPreview && (
+            <div className="excel-preview-note" role="note">
+              <ListChecks size={19} aria-hidden="true" />
+              <div>
+                <strong>Предпросмотр из Excel — backend не запускался</strong>
+                <p>
+                  Баллы рассчитаны для предпросмотра по чек-листу; backend не
+                  запускался. Данные доступны только для просмотра.
+                </p>
+              </div>
+            </div>
+          )}
+          {!isPreview && evaluation.demo && (
             <div className="demo-note">
               <Sparkles size={16} />
               <span>Демонстрационная оценка — ИИ не запускался</span>
             </div>
           )}
-          {p.evaluations.length > 1 && (
+          {!isPreview && p.evaluations.length > 1 && (
             <label className="run-select">
               Запуск оценки
               <select
@@ -326,19 +398,23 @@ export default function EvaluationPanel(p: Props) {
             key={p.conversation.id}
           >
             <div>
-              <span className="score-caption">Общий результат</span>
+              <span className="score-caption">
+                {isPreview ? "Итог предпросмотра" : "Общий результат"}
+              </span>
               <div className="score-number">
                 {scoreLabel(evaluation.total)}
                 <small>/ 100</small>
               </div>
-              {evaluation.originalTotal !== evaluation.total && (
+              {!isPreview && evaluation.originalTotal !== evaluation.total && (
                 <span className="score-original">
                   Исходная оценка ИИ: {scoreLabel(evaluation.originalTotal)}
                 </span>
               )}
               <p>
                 {evaluation.total === null
-                  ? "Для этих правил итог рассчитает сервер."
+                  ? isPreview
+                    ? "Для этих данных итог предпросмотра не рассчитан."
+                    : "Для этих правил итог рассчитает сервер."
                   : evaluation.total >= 90
                     ? "Высокое качество диалога"
                     : evaluation.total >= 70
@@ -383,6 +459,17 @@ export default function EvaluationPanel(p: Props) {
               ))}
             </dl>
           </div>
+          <div className="evaluation-export">
+            <ExportEvaluation
+              conversation={p.conversation}
+              evaluation={evaluation}
+              source={
+                isPreview
+                  ? "Предпросмотр из Excel; баллы рассчитаны по чек-листу, backend не запускался"
+                  : undefined
+              }
+            />
+          </div>
           {evaluation.grossViolation && (
             <div className="violation">
               <AlertTriangle size={20} />
@@ -403,7 +490,7 @@ export default function EvaluationPanel(p: Props) {
               <option value="all">Все критерии</option>
               <option value="issues">Потерянные баллы</option>
               <option value="na">N/A</option>
-              <option value="changed">Пересмотренные</option>
+              {!isPreview && <option value="changed">Пересмотренные</option>}
             </select>
           </div>
           {results.length === 0 && (
@@ -429,14 +516,7 @@ export default function EvaluationPanel(p: Props) {
                     a.evaluationId === evaluation.id && a.criterionId === c.id,
                 );
               const isClosed = collapsed.includes(c.id);
-              const issue =
-                c.type === "flag"
-                  ? r.answer === true
-                  : r.answer !== null &&
-                    (r.answer === false ||
-                      (typeof r.answer === "number" &&
-                        r.points !== null &&
-                        r.points < c.weight));
+              const issue = isIssue(r);
               return (
                 <article
                   className={`criterion-result ${issue ? "has-issue" : ""} ${isClosed ? "is-collapsed" : "is-expanded"}`}
@@ -485,6 +565,13 @@ export default function EvaluationPanel(p: Props) {
                       id={`criterion-detail-${evaluation.id}-${c.id}`}
                     >
                       <p>{r.explanation}</p>
+                      <details className="criterion-rule-disclosure">
+                        <summary>
+                          Правила критерия{" "}
+                          <ChevronDown size={14} aria-hidden="true" />
+                        </summary>
+                        <CriterionRules criterion={c} />
+                      </details>
                       {r.answer === null && r.naReason && (
                         <div className="na-reason">{r.naReason}</div>
                       )}
@@ -516,7 +603,7 @@ export default function EvaluationPanel(p: Props) {
                           )}
                         </button>
                       ))}
-                      {r.override && (
+                      {!isPreview && r.override && (
                         <div className="override">
                           <CheckCheck size={17} />
                           <div>
@@ -536,28 +623,30 @@ export default function EvaluationPanel(p: Props) {
                           </div>
                         </div>
                       )}
-                      <div className="criterion-result-footer">
-                        {appeal ? (
-                          <button
-                            className={`text-button ${appeal.status === "pending" ? "amber" : ""}`}
-                            onClick={() => p.onOpenAppeal(appeal.id)}
-                          >
-                            <MessageCircle size={14} />
-                            {appeal.status === "pending"
-                              ? "Ожидает рассмотрения"
-                              : "Решение проверяющего"}
-                            <ArrowUpRight size={13} />
-                          </button>
-                        ) : (
-                          <button
-                            className="text-button muted"
-                            onClick={() => p.onAppeal(evaluation, c)}
-                          >
-                            <MessageCircle size={14} />
-                            Оспорить
-                          </button>
-                        )}
-                      </div>
+                      {!isPreview && (
+                        <div className="criterion-result-footer">
+                          {appeal ? (
+                            <button
+                              className={`text-button ${appeal.status === "pending" ? "amber" : ""}`}
+                              onClick={() => p.onOpenAppeal(appeal.id)}
+                            >
+                              <MessageCircle size={14} />
+                              {appeal.status === "pending"
+                                ? "Ожидает рассмотрения"
+                                : "Решение проверяющего"}
+                              <ArrowUpRight size={13} />
+                            </button>
+                          ) : (
+                            <button
+                              className="text-button muted"
+                              onClick={() => p.onAppeal(evaluation, c)}
+                            >
+                              <MessageCircle size={14} />
+                              Оспорить
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </article>
