@@ -1,0 +1,44 @@
+{
+  "bundle_version": "two-stage-v1",
+  "model_alias_tested": "kimi-k3",
+  "temperature_tested": 0,
+  "max_tokens_tested": 16384,
+  "stream_tested": true,
+  "stages": {
+    "analysis": {
+      "system": "analysis.system.txt",
+      "user_prefix": "analysis.input_context.txt",
+      "payload_keys": [
+        "record",
+        "factual_ledger"
+      ],
+      "factual_ledger": null,
+      "output_keys": [
+        "results"
+      ],
+      "prompt_lineage": "A+C2, C6 timing cleanup, C7 concrete-result clarification"
+    },
+    "conversation_improvement": {
+      "system": "conversation_improvement.system.txt",
+      "payload_keys": [
+        "record",
+        "assessment"
+      ],
+      "output_keys": [
+        "conversation_improvement"
+      ],
+      "trigger": "Explicit user button after successful saved analysis",
+      "writes_existing_analysis": false
+    }
+  },
+  "sha256": {
+    "analysis.system.txt": "4b27e976411e53becccb7aead6ff117c3c366e909312fd100d4738053be95055",
+    "analysis.input_context.txt": "60c623108a2cfc57ea4924b35379292a6a03fe452f679821d2ae3ad5485e3910",
+    "conversation_improvement.system.txt": "bd93d45906f7ebd8be1796ec33a1ca0971f909f11d6845efb15807a6e2f09028"
+  },
+  "validation_scope": {
+    "analysis": "C6 cleanup tested on10 selected dialogues; C7 clarification on5; no full65 run of combined final prompt.",
+    "conversation_improvement": "Four additive-generation examples: two usable; one redundant clarification; one omitted farewell. Original analysis preserved by code, not regenerated."
+  },
+  "deployment_status": "Prompt package only; no website or API endpoint implementation included."
+}
