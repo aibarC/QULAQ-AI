@@ -59,6 +59,15 @@ function initialWorkspace(): Workspace {
 class EvaluationDisabledError extends Error {}
 async function readResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
+    const detail = await response.clone().json().catch(() => null);
+    if (detail?.code === "IMPROVEMENT_DISABLED")
+      throw new Error("Генерация примера отключена на сервере. Сохранённый анализ доступен.");
+    if (detail?.code === "IMPROVEMENT_FAILED")
+      throw new Error("Не удалось получить пример. Сохранённый анализ не изменён; автоматический повтор не выполнялся.");
+    if (detail?.code === "IMPROVEMENT_BUSY")
+      throw new Error("Пример уже готовится. Обновите данные позже.");
+    if (detail?.code === "ANALYSIS_CHANGED")
+      throw new Error("Анализ изменился во время генерации. Пример не сохранён; проверьте актуальные оценки.");
     if (response.status === 503) {
       const error = await response.json().catch(() => null);
       if (error?.code === "EVALUATION_DISABLED")
@@ -205,6 +214,9 @@ export function createLocalAdapter(
   }
   return {
     mode: "local",
+    improveConversation: async () => {
+      throw new Error("Для генерации рекомендации подключите сервер с доступом к модели.");
+    },
     uploadDataset: async () => {
       throw new Error("Для сохранения файла подключите локальный сервер.");
     },
@@ -417,6 +429,24 @@ export function createApiAdapter(
   };
   return {
     mode: "api",
+    improveConversation: async (evaluationId) => {
+      try {
+        return await request(`/evaluations/${encodeURIComponent(evaluationId)}/improvement`, {}, 180_000);
+      } catch (error) {
+        // Reconcile once; never repeat a potentially billable POST automatically.
+        try {
+          const reconciled = await request("/workspace");
+          throw new AdapterStateError(
+            error instanceof Error ? error.message : "Рекомендация не получена. Проверьте сохранённый результат.",
+            reconciled,
+          );
+        } catch (reconcileError) {
+          if (reconcileError instanceof AdapterStateError) throw reconcileError;
+          if (latest) throw new AdapterStateError("Результат генерации неизвестен. Обновите данные перед повторным запуском.", latest, true);
+          throw error;
+        }
+      }
+    },
     classifyReason: (evaluationId) =>
       request(
         `/evaluations/${encodeURIComponent(evaluationId)}/classify-reason`,

@@ -1,4 +1,5 @@
 import type { Checklist, Conversation } from "../../frontend/src/lib/types.ts";
+import { buildCanonicalAnalysisMessages, usesCanonicalAnalysis } from "./two-stage-prompts.ts";
 import { CONTACT_REASON_GROUPS } from "../../frontend/src/lib/contactReasons.ts";
 
 export function buildEvaluationMessages(
@@ -14,6 +15,7 @@ export function buildEvaluationMessages(
   ) {
     throw new Error("Для оценки нужен непустой транскрипт.");
   }
+  if (usesCanonicalAnalysis(checklist)) return buildCanonicalAnalysisMessages(conversation);
   return [
     {
       role: "system",

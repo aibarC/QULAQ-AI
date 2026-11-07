@@ -285,6 +285,17 @@ const evaluationSchema = z.object({
     })
     .strict()
     .optional(),
+  provenance: z.object({
+    promptVersion: z.string().min(1).max(200),
+    transcriptHash: z.string().regex(/^[a-f0-9]{64}$/),
+    model: z.string().min(1).max(200),
+  }).strict().optional(),
+  improvement: z.object({
+    text: z.string().trim().min(1).max(12000).nullable(),
+    assessmentFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    createdAt: date,
+    promptVersion: z.string().min(1).max(200),
+  }).strict().optional(),
 });
 const appealSchema = z.object({
   id,
@@ -304,6 +315,7 @@ const appealSchema = z.object({
     .optional(),
 });
 const workspaceSchema = z.object({
+  capabilities: z.object({ evaluationEnabled: z.boolean(), improvementEnabled: z.boolean() }).strict().optional(),
   conversations: z.array(conversationSchema).max(10_000),
   checklists: z.array(checklistSchema).min(1).max(1000),
   evaluations: z.array(evaluationSchema).max(20_000),

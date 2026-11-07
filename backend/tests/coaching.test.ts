@@ -91,8 +91,13 @@ test("appeal to pass preserves original coaching and disk persistence without in
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
 
-test("prompt requires rule-specific coaching and blocks fabricated business promises", () => {
-  const system = buildEvaluationMessages(conversation, initialChecklist)[0].content;
+test("custom-rubric fallback prompt requires rule-specific coaching and blocks fabricated business promises", () => {
+  const canonical = buildEvaluationMessages(conversation, initialChecklist)[0].content;
+  assert.ok(!canonical.includes('coaching'));
+  assert.ok(!canonical.includes('contact_reason'));
+  const customChecklist = structuredClone(initialChecklist);
+  customChecklist.criteria[0].description += ' Уточнённое правило пользователя.';
+  const system = buildEvaluationMessages(conversation, customChecklist)[0].content;
   assert.match(system, /coaching обязателен/);
   assert.match(system, /Не обещай сроки, суммы, тарифы/);
   assert.match(system, /needsContext=true требует response=null/);

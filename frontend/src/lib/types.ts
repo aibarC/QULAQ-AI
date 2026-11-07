@@ -94,6 +94,13 @@ export interface Evaluation {
   /** Absent on historic runs; never inferred or backfilled by the UI. */
   contactReason?: ContactReason;
   classificationError?: ClassificationError;
+  provenance?: { promptVersion: string; transcriptHash: string; model: string };
+  improvement?: {
+    text: string | null;
+    assessmentFingerprint: string;
+    createdAt: string;
+    promptVersion: string;
+  };
 }
 export interface Appeal {
   id: string;
@@ -115,6 +122,7 @@ export interface Workspace {
   checklists: Checklist[];
   evaluations: Evaluation[];
   appeals: Appeal[];
+  capabilities?: { evaluationEnabled: boolean; improvementEnabled: boolean };
 }
 export interface DecisionInput {
   action: "confirm" | "change";
@@ -125,6 +133,7 @@ export interface WorkspaceAdapter {
   readonly mode: "local" | "api";
   load(): Promise<Workspace>;
   classifyReason(evaluationId: string): Promise<Workspace>;
+  improveConversation(evaluationId: string): Promise<Workspace>;
   importDataset(groupId: string): Promise<Workspace>;
   uploadDataset(dataset: unknown): Promise<Workspace>;
   saveChecklist(checklist: Checklist): Promise<Workspace>;

@@ -16,16 +16,7 @@ export default function CoachingAdvice({
   const [expanded, setExpanded] = useState(false);
   if (!isCriterionIssue(criterion, result.answer)) return null;
   const advice = result.coaching;
-  if (!advice)
-    return (
-      <div className="coaching-pending">
-        <Lightbulb size={15} aria-hidden="true" />
-        <span>
-          В этом анализе пример ответа не сохранён. Он появится при новом
-          анализе, если модель сможет предложить безопасную формулировку.
-        </span>
-      </div>
-    );
+  if (!advice) return null;
   const long = (advice.response?.length ?? 0) > 320;
   return (
     <section className="coaching-advice" aria-label="Как можно было ответить">

@@ -69,6 +69,12 @@ for (const [port, allowEvaluation] of [
     initialChecklist,
     recalculate,
     allowEvaluation,
+    allowImprovement: allowEvaluation,
+    improve: async ({ signal }) => {
+      if (!allowEvaluation || signal.aborted)
+        throw new Error("Disabled or cancelled synthetic improvement");
+      return "Синтетический пример: сначала уточните затруднение клиента, затем предложите подходящий следующий шаг.";
+    },
     evaluate: async ({ conversation, checklist, signal }) => {
       if (!allowEvaluation)
         throw new Error("Disabled fixture must never evaluate");

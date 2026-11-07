@@ -6,7 +6,7 @@ export function getRuntimeConfig(args: string[] = process.argv.slice(2)) {
   const value = (name: string) =>
     args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
   const port = Number(value("port") ?? 8000);
-  const maxTokens = Number(value("max-tokens") ?? 4096);
+  const maxTokens = Number(value("max-tokens") ?? 16384);
   if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 32768)
     throw new Error("Invalid model output limit");
   if (!Number.isInteger(port) || port < 1024 || port > 65535)

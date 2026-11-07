@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { getRuntimeConfig, repositoryRoot } from "./config.ts";
-import { createGatewayEvaluator } from "./provider.ts";
+import { createGatewayProvider } from "./provider.ts";
 import { createApp } from "./server.ts";
 import { createStore } from "./store.ts";
 import { initialChecklist, recalculate } from "./scoring.ts";
@@ -29,6 +29,17 @@ async function start() {
         workerPath: config.layaWorkerPath,
       })
     : undefined;
+  const provider = createGatewayProvider({
+      enabled: config.allowEvaluation,
+      baseUrl: config.allowEvaluation
+        ? (process.env.LLM_BASE_URL ?? "")
+        : "https://llm.telecom.kz/v1",
+      getToken: () => process.env.LLM_API_TOKEN,
+      model: config.model,
+      maxTokens: config.maxTokens,
+      quotaPath: config.quotaPath,
+      localClassifier,
+    });
   const app = createApp({
     store,
     initialChecklist,
@@ -44,17 +55,9 @@ async function start() {
             evaluation.contactReason,
           )
       : undefined,
-    evaluate: createGatewayEvaluator({
-      enabled: config.allowEvaluation,
-      baseUrl: config.allowEvaluation
-        ? (process.env.LLM_BASE_URL ?? "")
-        : "https://llm.telecom.kz/v1",
-      getToken: () => process.env.LLM_API_TOKEN,
-      model: config.model,
-      maxTokens: config.maxTokens,
-      quotaPath: config.quotaPath,
-      localClassifier,
-    }),
+    evaluate: provider.evaluate,
+    improve: provider.improve,
+    allowImprovement: config.allowEvaluation,
   });
   app.on("error", () => {
     console.error("Локальный сервер не запущен: проверьте свободный порт.");

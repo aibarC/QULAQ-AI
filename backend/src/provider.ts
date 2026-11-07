@@ -1,11 +1,14 @@
+import { createHash } from "node:crypto";
 import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Checklist, Conversation } from "../../frontend/src/lib/types.ts";
+import type { Checklist, Conversation, Evaluation, ClassificationError } from "../../frontend/src/lib/types.ts";
 import { buildEvaluationMessages } from "./prompt.ts";
+import { buildImprovementMessages, parseImprovementOutput, usesCanonicalAnalysis, TWO_STAGE_VERSION } from "./two-stage-prompts.ts";
+import { readModelOutput, withAbort } from "./two-stage-transport.ts";
 import { scoreModelOutput } from "./scoring.ts";
 import { enrichWithLaya, type LayaClassifier } from "./laya.ts";
 
-type ProviderOptions = {
+export type ProviderOptions = {
   enabled?: boolean;
   baseUrl: string;
   model: string;
@@ -17,18 +20,13 @@ type ProviderOptions = {
   localClassifier?: LayaClassifier;
 };
 
-/** No warmup, model listing, retries, redirects or calls before the one-use gate. */
-export function createGatewayEvaluator(options: ProviderOptions) {
+type EvaluationInput = { conversation: Conversation; checklist: Checklist; signal: AbortSignal };
+type ImprovementInput = { conversation: Conversation; evaluation: Evaluation; signal: AbortSignal };
+
+/** Both explicit actions share a single durable one-request allowance. */
+export function createGatewayProvider(options: ProviderOptions) {
   let consumed = false;
-  return async ({
-    conversation,
-    checklist,
-    signal,
-  }: {
-    conversation: Conversation;
-    checklist: Checklist;
-    signal: AbortSignal;
-  }) => {
+  async function request(conversation: Conversation, messages: { role: "system" | "user"; content: string }[], signal: AbortSignal) {
     if (!options.enabled) throw new Error("EVALUATION_DISABLED");
     if (consumed) throw new Error("ONE_TEST_ALREADY_USED");
     const endpoint = new URL(
@@ -79,63 +77,51 @@ export function createGatewayEvaluator(options: ProviderOptions) {
       await receipt.close();
     }
 
-    // The allowance is consumed BEFORE the request, including failed/ambiguous requests.
-    // A restart cannot turn the same authorization into another paid call.
+
+    // One deadline and no automatic retries, including after an ambiguous failure.
+    const deadline = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 120_000)]);
     let response: Response;
     try {
-      response = await (options.fetcher ?? fetch)(endpoint, {
-        method: "POST",
-        redirect: "error",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: options.model,
-          temperature: 0,
-          max_tokens: options.maxTokens ?? 4096,
-          messages: buildEvaluationMessages(conversation, checklist),
-        }),
-        signal: AbortSignal.any([
-          signal,
-          AbortSignal.timeout(options.timeoutMs ?? 90_000),
-        ]),
-      });
-    } catch {
-      throw new Error("LLM_REQUEST_FAILED_NO_RETRY");
-    }
+      response = await withAbort((options.fetcher ?? fetch)(endpoint, {
+        method: "POST", redirect: "error",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: options.model, temperature: 0,
+          max_tokens: options.maxTokens ?? 16384, stream: true, messages }),
+        signal: deadline,
+      }), deadline);
+    } catch { throw new Error("LLM_REQUEST_FAILED_NO_RETRY"); }
     if (!response.ok) {
-      await response.body?.cancel();
+      void response.body?.cancel().catch(() => undefined);
       throw new Error("LLM_RESPONSE_REJECTED_NO_RETRY");
     }
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("LLM_EMPTY_RESPONSE");
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        size += chunk.value.byteLength;
-        if (size > 2_000_000) {
-          await reader.cancel();
-          throw new Error("LLM_RESPONSE_TOO_LARGE");
-        }
-        chunks.push(chunk.value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    let raw: unknown;
-    try {
-      const envelope = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      const content = envelope?.choices?.[0]?.message?.content;
-      if (typeof content !== "string") throw new Error();
-      raw = JSON.parse(content);
-    } catch {
-      throw new Error("LLM_INVALID_JSON_RESPONSE");
-    }
-    const outcome = scoreModelOutput(conversation, checklist, raw);
-    return options.localClassifier ? enrichWithLaya(outcome, conversation, checklist, options.localClassifier, signal) : outcome;
+    return readModelOutput(response, deadline);
+  }
+  return {
+    async evaluate({ conversation, checklist, signal }: EvaluationInput): Promise<ReturnType<typeof scoreModelOutput> & { classificationError?: ClassificationError; provenance: { promptVersion: string; transcriptHash: string; model: string } }> {
+      // Keep disabled/empty-transcript checks ahead of prompt construction too.
+      if (!options.enabled) throw new Error("EVALUATION_DISABLED");
+      if (!conversation.messages.some((message) => message.text.trim())) throw new Error("EMPTY_TRANSCRIPT");
+      const messages = buildEvaluationMessages(conversation, checklist);
+      const raw = await request(conversation, messages, signal);
+      const outcome = scoreModelOutput(conversation, checklist, raw);
+      const enriched = options.localClassifier
+        ? await enrichWithLaya(outcome, conversation, checklist, options.localClassifier, signal) : outcome;
+      const canonicalRecord = { conversation_id: conversation.externalId, language: conversation.language,
+        channel: conversation.channel, transcript: conversation.messages.map(({ id, speaker, text, timestamp }) => ({ id, speaker, text, timestamp })) };
+      return { ...enriched, provenance: {
+        promptVersion: usesCanonicalAnalysis(checklist) ? `${TWO_STAGE_VERSION}/analysis` : "dynamic-checklist-v1",
+        transcriptHash: createHash("sha256").update(JSON.stringify(canonicalRecord)).digest("hex"), model: options.model,
+      } };
+    },
+    async improve({ conversation, evaluation, signal }: ImprovementInput): Promise<string | null> {
+      if (!options.enabled) throw new Error("EVALUATION_DISABLED");
+      if (!usesCanonicalAnalysis(evaluation.checklist)) throw new Error("UNSUPPORTED_IMPROVEMENT_CHECKLIST");
+      const messages = buildImprovementMessages(conversation, evaluation);
+      return parseImprovementOutput(await request(conversation, messages, signal));
+    },
   };
+}
+/** Backwards-compatible analysis-only factory; new callers should share the provider. */
+export function createGatewayEvaluator(options: ProviderOptions) {
+  return createGatewayProvider(options).evaluate;
 }

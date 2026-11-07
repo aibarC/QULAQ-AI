@@ -228,7 +228,7 @@ test("classify-reason saves local provenance and clears old errors while preserv
   const response = await f.post(`/api/evaluations/${encodeURIComponent(evaluation.id)}/classify-reason`, {});
   assert.equal(response.status, 200);
   const returned = await response.json() as Workspace;
-  assert.deepEqual(returned, f.store.snapshot());
+  assert.deepEqual(returned, { ...f.store.snapshot(), capabilities: { evaluationEnabled: false, improvementEnabled: false } });
   assert.deepEqual(returned.evaluations[0], { ...evaluation, contactReason: classification });
   assert.equal(returned.evaluations[0].classificationError, undefined);
   assert.equal(returned.conversations[0].status, "evaluated");
@@ -251,7 +251,7 @@ test("classify-reason failure saves safe error but preserves prior classificatio
       const response = await f.post(`/api/evaluations/${encodeURIComponent(evaluation.id)}/classify-reason`, {});
       assert.equal(response.status, 200);
       const returned = await response.json() as Workspace;
-      assert.deepEqual(returned, f.store.snapshot());
+      assert.deepEqual(returned, { ...f.store.snapshot(), capabilities: { evaluationEnabled: false, improvementEnabled: false } });
       const { classificationError, ...preserved } = returned.evaluations[0];
       assert.deepEqual(preserved, evaluation);
       assert.equal(classificationError?.provider, "laya");
@@ -499,4 +499,67 @@ test("appeals use immutable result rules, deduplicate pending requests and prese
       .status,
     409,
   );
+});
+
+
+test("improvement is explicit, persists null or text, caches, and never rewrites scores", async (t) => {
+  for (const text of [null, "Учебный пример улучшенного ответа."]) {
+    let calls = 0;
+    const f = await fixture(t, { allowImprovement: true, improve: async () => { calls++; return text; } });
+    const original = await seedClassifiableEvaluation(f.store);
+    const path = `/api/evaluations/${encodeURIComponent(original.id)}/improvement`;
+    const response = await f.post(path, {});
+    assert.equal(response.status, 200);
+    const returned = await response.json() as Workspace;
+    assert.equal(returned.capabilities?.improvementEnabled, true);
+    const { improvement, ...unchanged } = returned.evaluations[0];
+    assert.deepEqual(unchanged, original);
+    assert.equal(improvement?.text, text);
+    assert.match(improvement!.assessmentFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal((await f.post(path, {})).status, 200);
+    assert.equal(calls, 1);
+    assert.deepEqual(f.store.snapshot().evaluations[0].improvement, improvement);
+    const appealResponse = await f.post("/api/appeals", { evaluationId: original.id, criterionId: "clear", comment: "Synthetic appeal" });
+    const appeal = (await appealResponse.json() as Workspace).appeals[0];
+    const decision = await f.post(`/api/appeals/${encodeURIComponent(appeal.id)}/decision`, { action: "change", answer: false, reason: "Synthetic review" });
+    assert.equal(decision.status, 200);
+    assert.equal(f.store.snapshot().evaluations[0].improvement, undefined);
+    assert.equal(f.store.snapshot().evaluations[0].originalTotal, original.originalTotal);
+  }
+});
+
+test("improvement failure stays distinct from null and leaves analysis intact", async (t) => {
+  const f = await fixture(t, { allowImprovement: true, improve: async () => { throw new Error("PRIVATE_PROVIDER_DETAIL"); } });
+  const original = await seedClassifiableEvaluation(f.store);
+  const response = await f.post(`/api/evaluations/${encodeURIComponent(original.id)}/improvement`, {});
+  assert.equal(response.status, 502);
+  assert.ok(!(await response.text()).includes("PRIVATE_PROVIDER_DETAIL"));
+  assert.deepEqual(f.store.snapshot().evaluations[0], original);
+});
+
+test("disabled improvement does not invoke provider", async (t) => {
+  let calls = 0;
+  const f = await fixture(t, { improve: async () => { calls++; return null; } });
+  const original = await seedClassifiableEvaluation(f.store);
+  assert.equal((await f.post(`/api/evaluations/${encodeURIComponent(original.id)}/improvement`, {})).status, 503);
+  assert.equal(calls, 0);
+});
+
+test("concurrent review discards stale improvement and duplicate generation is rejected", async (t) => {
+  let release!: (value: string) => void;
+  let started!: () => void;
+  const began = new Promise<void>(resolve => { started = resolve; });
+  const f = await fixture(t, { allowImprovement: true, improve: async () => { started(); return new Promise<string>(resolve => { release = resolve; }); } });
+  const original = await seedClassifiableEvaluation(f.store);
+  const path = `/api/evaluations/${encodeURIComponent(original.id)}/improvement`;
+  const pending = f.post(path, {});
+  await began;
+  assert.equal((await f.post(path, {})).status, 409);
+  await f.post("/api/appeals", { evaluationId: original.id, criterionId: "clear", comment: "Synthetic appeal" });
+  const appeal = f.store.snapshot().appeals[0];
+  assert.equal((await f.post(`/api/appeals/${encodeURIComponent(appeal.id)}/decision`, { action: "change", answer: false, reason: "Concurrent review" })).status, 200);
+  release("Stale recommendation");
+  assert.equal((await pending).status, 409);
+  assert.equal(f.store.snapshot().evaluations[0].improvement, undefined);
+  assert.equal(f.store.snapshot().evaluations[0].results[0].answer, false);
 });

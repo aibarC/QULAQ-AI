@@ -110,8 +110,13 @@ test("reviewer recalculation and disk reload preserve classification without bac
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
 
-test("prompt requires purpose classification and explicit resolution evidence independently of quality", () => {
-  const system = buildEvaluationMessages(conversation, initialChecklist)[0].content;
+test("custom-rubric fallback prompt requires purpose classification and explicit resolution evidence independently of quality", () => {
+  const canonical = buildEvaluationMessages(conversation, initialChecklist)[0].content;
+  assert.ok(!canonical.includes('coaching'));
+  assert.ok(!canonical.includes('contact_reason'));
+  const customChecklist = structuredClone(initialChecklist);
+  customChecklist.criteria[0].description += ' Уточнённое правило пользователя.';
+  const system = buildEvaluationMessages(conversation, customChecklist)[0].content;
   assert.match(system, /contact_reason обязателен/);
   assert.match(system, /primary=deposit, secondary может содержать technical/);
   assert.match(system, /сами по себе НЕ подтверждают решение/);

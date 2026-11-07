@@ -1692,6 +1692,9 @@ export default function App() {
                           selectedId={route.evaluationId || ""}
                           onSelect={(id) => go({ ...route, evaluationId: id })}
                           appeals={workspace.appeals}
+                          improvementEnabled={workspace.capabilities?.improvementEnabled === true}
+                          busy={!!busy}
+                          onImprove={(id) => mutate(`improve:${id}`, () => adapter.improveConversation(id))}
                           onViewAppeals={() => {
                             setAppealFilter("all");
                             go({ page: "appeals" });

@@ -14,6 +14,7 @@ export default defineConfig({
     browserName: "chromium",
     launchOptions: {
       executablePath:
+        process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     },
     screenshot: "off",

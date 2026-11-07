@@ -6,7 +6,7 @@ import {
   type Server,
 } from "node:http";
 import { readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   parseDataset,
   validAnswer,
@@ -37,7 +37,10 @@ export interface AppOptions {
     grossViolation: boolean;
     contactReason?: ContactReason;
     classificationError?: ClassificationError;
+    provenance?: Evaluation["provenance"];
   }>;
+  improve?(input: { conversation: Conversation; evaluation: Evaluation; signal: AbortSignal }): Promise<string | null>;
+  allowImprovement?: boolean;
   recalculate(evaluation: Evaluation): Evaluation;
   allowEvaluation?: boolean;
   classifyReason?: (
@@ -217,6 +220,23 @@ export function createApp(options: AppOptions): Server {
     controller: AbortController;
   };
   const jobs = new Map<string, Job>();
+  const improving = new Map<string, AbortController>();
+  const capabilities = () => ({
+    evaluationEnabled: Boolean(options.allowEvaluation),
+    improvementEnabled: Boolean(options.allowImprovement && options.improve),
+  });
+  const reply = (response: ServerResponse, status: number, value: unknown) => {
+    const workspace = value as Partial<Workspace> | null;
+    send(response, status, workspace && Array.isArray(workspace.evaluations) && Array.isArray(workspace.conversations)
+      ? { ...workspace, capabilities: capabilities() } : value);
+  };
+  const fingerprint = (conversation: Conversation, evaluation: Evaluation) =>
+    createHash("sha256").update(JSON.stringify({
+      recordId: conversation.id, language: conversation.language, channel: conversation.channel,
+      messages: conversation.messages, evaluationId: evaluation.id,
+      checklist: evaluation.checklist, results: evaluation.results,
+      total: evaluation.total, grossViolation: evaluation.grossViolation,
+    })).digest("hex");
 
   async function execute(job: Job) {
     try {
@@ -238,6 +258,7 @@ export function createApp(options: AppOptions): Server {
           originalAnswer: result.answer,
           override: undefined,
         })),
+        ...(outcome.provenance ? { provenance: outcome.provenance } : {}),
         total: outcome.total,
         originalTotal: outcome.total,
         grossViolation: outcome.grossViolation,
@@ -281,7 +302,7 @@ export function createApp(options: AppOptions): Server {
       checkLocalRequest(request);
       const path = new URL(request.url || "/", "http://localhost").pathname;
       if (request.method === "GET" && path === "/api/workspace")
-        return send(response, 200, store.snapshot());
+        return reply(response, 200, store.snapshot());
       if (request.method !== "POST")
         throw new HttpError(404, "NOT_FOUND", "Маршрут не найден.");
       const input = await body(request);
@@ -337,7 +358,7 @@ export function createApp(options: AppOptions): Server {
               "Загрузите непустые транскрипты.",
             );
         }
-        return send(
+        return reply(
           response,
           200,
           await store.mutate((draft) => mergeConversations(draft, records)),
@@ -379,7 +400,57 @@ export function createApp(options: AppOptions): Server {
             draft.checklists[draft.checklists.indexOf(existing)] = next;
           else draft.checklists.push(next);
         });
-        return send(response, 200, workspace);
+        return reply(response, 200, workspace);
+      }
+
+      const improvementMatch = /^\/api\/evaluations\/([^/]+)\/improvement$/.exec(path);
+      if (improvementMatch) {
+        if (!options.allowImprovement || !options.improve)
+          throw new HttpError(503, "IMPROVEMENT_DISABLED", "Генерация примера отключена. Требуется отдельное разрешение на запрос модели.");
+        let evaluationId: string;
+        try { evaluationId = decodeURIComponent(improvementMatch[1]); }
+        catch { throw new HttpError(422, "INVALID_INPUT", "Некорректный ID анализа."); }
+        const snapshot = store.snapshot();
+        const evaluation = snapshot.evaluations.find(item => item.id === evaluationId);
+        const conversation = snapshot.conversations.find(item => item.id === evaluation?.recordId);
+        if (!evaluation || !conversation || evaluation.demo || conversation.demo)
+          throw new HttpError(404, "NOT_FOUND", "Сохранённый анализ не найден.");
+        if (evaluation.provenance?.promptVersion === "dynamic-checklist-v1")
+          throw new HttpError(422, "UNSUPPORTED_IMPROVEMENT_CHECKLIST", "Пример доступен для исходного чек-листа. Для изменённых правил нужен адаптированный промпт.");
+        const assessmentFingerprint = fingerprint(conversation, evaluation);
+        if (evaluation.improvement?.assessmentFingerprint === assessmentFingerprint)
+          return reply(response, 200, snapshot);
+        if (improving.has(evaluationId))
+          throw new HttpError(409, "IMPROVEMENT_BUSY", "Пример уже готовится. Дождитесь результата.");
+        const controller = new AbortController();
+        improving.set(evaluationId, controller);
+        const deadline = setTimeout(() => controller.abort(), 150_000);
+        const disconnected = () => { if (!response.writableEnded) controller.abort(); };
+        response.on("close", disconnected);
+        try {
+          let text: string | null;
+          try {
+            const aborted = new Promise<never>((_, reject) => {
+              controller.signal.addEventListener("abort", () => reject(new Error("Aborted")), { once: true });
+            });
+            text = await Promise.race([options.improve({ conversation, evaluation, signal: controller.signal }), aborted]);
+            if (text !== null && (typeof text !== "string" || !text.trim() || text.length > 12_000)) throw new Error("Invalid improvement");
+          } catch {
+            throw new HttpError(502, "IMPROVEMENT_FAILED", "Не удалось получить пример. Сохранённый анализ не изменён. Автоматический повтор не выполнялся.");
+          }
+          const workspace = await store.mutate(draft => {
+            const current = draft.evaluations.find(item => item.id === evaluationId);
+            const record = draft.conversations.find(item => item.id === current?.recordId);
+            if (!current || !record || fingerprint(record, current) !== assessmentFingerprint)
+              throw new HttpError(409, "ANALYSIS_CHANGED", "Анализ изменился во время генерации. Пример не сохранён.");
+            current.improvement = { text, assessmentFingerprint, createdAt: new Date().toISOString(), promptVersion: "two-stage-v1/conversation_improvement" };
+          });
+          return reply(response, 200, workspace);
+        } finally {
+          clearTimeout(deadline);
+          response.off("close", disconnected);
+          improving.delete(evaluationId);
+        }
       }
 
       const classifyMatch =
@@ -450,7 +521,7 @@ export function createApp(options: AppOptions): Server {
               current.classificationError = classificationError;
             }
           });
-          return send(response, 200, workspace);
+          return reply(response, 200, workspace);
         } finally {
           classifying.delete(evaluationId);
         }
@@ -500,7 +571,7 @@ export function createApp(options: AppOptions): Server {
           record.status = "evaluating";
         });
         if (created) jobs.set(recordId, created);
-        send(response, 202, workspace);
+        reply(response, 202, workspace);
         if (created) {
           const job = created;
           setImmediate(() => {
@@ -514,7 +585,7 @@ export function createApp(options: AppOptions): Server {
         const evaluationId = field(input, "evaluationId"),
           criterionId = field(input, "criterionId"),
           comment = field(input, "comment", 4000);
-        return send(
+        return reply(
           response,
           200,
           await store.mutate((draft) => {
@@ -573,7 +644,7 @@ export function createApp(options: AppOptions): Server {
             "INVALID_DECISION",
             "Выберите действие проверяющего.",
           );
-        return send(
+        return reply(
           response,
           200,
           await store.mutate((draft) => {
@@ -617,6 +688,7 @@ export function createApp(options: AppOptions): Server {
               createdAt: new Date().toISOString(),
             };
             if (action === "change") {
+              delete evaluation.improvement;
               result.answer = answer;
               result.override = { answer, reason, appealId };
               if (answer === null) result.naReason = reason;
@@ -647,12 +719,12 @@ export function createApp(options: AppOptions): Server {
     } catch (error) {
       if (!response.headersSent && !response.destroyed) {
         if (error instanceof HttpError)
-          send(response, error.status, {
+          reply(response, error.status, {
             code: error.code,
             message: error.message,
           });
         else
-          send(response, 500, {
+          reply(response, 500, {
             code: "INTERNAL_ERROR",
             message:
               "Не удалось сохранить действие. Обновите данные и попробуйте снова.",
@@ -665,6 +737,7 @@ export function createApp(options: AppOptions): Server {
   server.maxRequestsPerSocket = 100;
   server.on("close", () => {
     for (const job of jobs.values()) job.controller.abort();
+    for (const controller of improving.values()) controller.abort();
   });
   return server;
 }

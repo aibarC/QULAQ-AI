@@ -16,7 +16,7 @@ test.beforeEach(async ({ page }, testInfo) => {
   });
 });
 
-test("real local HTTP persists an uploaded TXT, evaluates through the injected scorer, exports evidence and saves reviewer correction", async ({
+test("real local HTTP persists upload, analysis, separate improvement, export and reviewer correction", async ({
   page,
 }, testInfo) => {
   test.skip(
@@ -72,6 +72,28 @@ test("real local HTTP persists an uploaded TXT, evaluates through the injected s
   ).toBeDisabled();
   await expect(page.locator(".score-number")).toHaveText("85,00/ 100");
   await expect(page.locator(".criterion-result")).toHaveCount(8);
+  const savedBeforeImprovement = await (await page.request.get("/api/workspace")).json();
+  const analysisBeforeImprovement = savedBeforeImprovement.evaluations.find(
+    (evaluation: { recordId: string }) => evaluation.recordId.startsWith("UPLOAD:"),
+  ) ?? savedBeforeImprovement.evaluations.at(-1);
+  const improvement = page.getByRole("region", {
+    name: "Пример правильного подхода", exact: true,
+  });
+  await improvement.getByRole("button", {
+    name: "Показать пример правильного подхода", exact: true,
+  }).click();
+  await expect(improvement).toContainText("Синтетический пример: сначала уточните затруднение клиента");
+  await expect(improvement).toContainText("не реальный разговор");
+  await expect(page.locator(".score-number")).toHaveText("85,00/ 100");
+  await page.reload();
+  await expect(improvement).toContainText("Синтетический пример: сначала уточните затруднение клиента");
+  const savedAfterImprovement = await (await page.request.get("/api/workspace")).json();
+  const { improvement: savedAdvice, ...unchangedAnalysis } = savedAfterImprovement.evaluations.find(
+    (evaluation: { id: string }) => evaluation.id === analysisBeforeImprovement.id,
+  );
+  expect(savedAdvice.text).toContain("Синтетический пример:");
+  expect(unchangedAnalysis).toEqual(analysisBeforeImprovement);
+  expect(requests.filter((path) => path.endsWith("/improvement"))).toHaveLength(1);
   await expect(
     page
       .getByText(
@@ -177,6 +199,13 @@ test("real local HTTP persists an uploaded TXT, evaluates through the injected s
     page.getByRole("heading", { name: "Решение сохранено", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".decision-total")).toContainText("100,00");
+  const savedAfterReview = await (await page.request.get("/api/workspace")).json();
+  const reviewedAnalysis = savedAfterReview.evaluations.find(
+    (evaluation: { id: string }) => evaluation.id === analysisBeforeImprovement.id,
+  );
+  expect(reviewedAnalysis.improvement).toBeUndefined();
+  expect(reviewedAnalysis.originalTotal).toBe(85);
+  expect(reviewedAnalysis.total).toBe(100);
   await page.reload();
   await expect(page.locator(".decision-total")).toContainText("100,00");
   await page.getByRole("button", { name: "Пользователь", exact: true }).click();

@@ -32,6 +32,7 @@ import {
 import "./evaluation-motion.css";
 import CoachingAdvice from "./CoachingAdvice";
 import ExportEvaluation from "./ExportEvaluation";
+import ConversationImprovement from "./ConversationImprovement";
 
 function CriterionRules({ criterion }: { criterion: Criterion }) {
   return (
@@ -134,6 +135,9 @@ interface Props {
   onAppeal: (e: Evaluation, c: Criterion) => void;
   onOpenAppeal: (id: string) => void;
   onViewAppeals: () => void;
+  improvementEnabled?: boolean;
+  busy?: boolean;
+  onImprove?: (id: string) => Promise<unknown>;
 }
 export default function EvaluationPanel(p: Props) {
   const [checklistId, setChecklistId] = useState(p.checklists[0]?.id || "");
@@ -522,6 +526,11 @@ export default function EvaluationPanel(p: Props) {
               }
             />
           </div>
+          {!isPreview && !evaluation.demo && p.onImprove && (
+            <ConversationImprovement key={evaluation.id} evaluation={evaluation}
+              enabled={!!p.improvementEnabled} busy={!!p.busy || p.evaluating}
+              onGenerate={p.onImprove} onRefresh={p.onRefresh} />
+          )}
           {evaluation.grossViolation && (
             <div className="violation">
               <AlertTriangle size={20} />
