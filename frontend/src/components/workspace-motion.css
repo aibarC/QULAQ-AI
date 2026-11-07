@@ -1,0 +1,50 @@
+.motion-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #64647a;
+}
+.motion-settings select {
+  font: inherit;
+  color: #494268;
+  background: #ffffffb3;
+  border: 1px solid #d9d9ed;
+  border-radius: 8px;
+  padding: 7px;
+  min-height: 32px;
+}
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion="moderate"] .listening-art {
+  transform: none !important;
+}
+html[data-motion="moderate"] .listening-stage,
+html[data-motion="moderate"] .listening-sculpture,
+html[data-motion="moderate"] .listening-sculpture i,
+html[data-motion="moderate"] .listening-shadow,
+html[data-motion="moderate"] .listening-object::before {
+  animation: none !important;
+}
+html[data-motion="off"] .listening-art {
+  transform: none !important;
+}
+html[data-motion="off"] .listening-motion,
+html[data-motion="moderate"] .listening-motion {
+  display: none;
+}
+.workspace-footer {
+  flex-wrap: wrap;
+  gap: 16px;
+}
+@media (max-width: 520px) {
+  .motion-settings {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+}

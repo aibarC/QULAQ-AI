@@ -1,0 +1,600 @@
+import { useEffect, useId, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import {
+  X,
+  LoaderCircle,
+  AlertCircle,
+  Headphones,
+  MessageSquare,
+  ArrowUpRight,
+  AudioLines,
+  Search,
+  ExternalLink,
+} from "lucide-react";
+import type {
+  Answer,
+  Evidence,
+  Criterion,
+  Conversation,
+  Message,
+  Status,
+} from "../lib/types";
+import "./transcript-motion.css";
+import AudioPlayer from "./AudioPlayer";
+import { elapsedLabel, messageOffset } from "../lib/timeline";
+
+export function Spinner() {
+  return <LoaderCircle size={17} className="spin" aria-hidden="true" />;
+}
+export function Logo({ small = false }: { small?: boolean }) {
+  return (
+    <div className={`logo ${small ? "small" : ""}`}>
+      <span className="logo-mark">
+        <AudioLines size={27} strokeWidth={2.2} />
+      </span>
+      <span>
+        qulaq<span className="logo-dot">.</span>
+      </span>
+    </div>
+  );
+}
+export function StatusBadge({ status }: { status: Status }) {
+  const labels = {
+    unrated: "Не оценён",
+    evaluating: "Оценивается",
+    evaluated: "Оценён",
+    error: "Ошибка",
+  };
+  return (
+    <span className={`status ${status}`}>
+      <i />
+      {labels[status]}
+    </span>
+  );
+}
+export function ChannelIcon({
+  channel,
+  size = 18,
+}: {
+  channel: string;
+  size?: number;
+}) {
+  return channel === "voice call" ? (
+    <Headphones size={size} />
+  ) : (
+    <MessageSquare size={size} />
+  );
+}
+export function ErrorBox({ children }: { children: ReactNode }) {
+  return (
+    <div className="error-box" role="alert">
+      <AlertCircle size={18} />
+      <span>{children}</span>
+    </div>
+  );
+}
+export function Empty({
+  icon,
+  title,
+  children,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon">{icon}</div>
+      <h3>{title}</h3>
+      <p>{children}</p>
+      {action}
+    </div>
+  );
+}
+export function Modal({
+  title,
+  children,
+  onClose,
+  busy = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  busy?: boolean;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    const prev = document.activeElement as HTMLElement;
+    d.showModal();
+    return () => {
+      d.close();
+      prev?.focus();
+    };
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className="modal"
+      aria-labelledby="modal-title"
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!busy) onClose();
+      }}
+      onClick={(e) => {
+        if (e.target === ref.current && !busy) {
+          const r = ref.current!.getBoundingClientRect();
+          if (
+            e.clientX < r.left ||
+            e.clientX > r.right ||
+            e.clientY < r.top ||
+            e.clientY > r.bottom
+          )
+            onClose();
+        }
+      }}
+    >
+      <div className="modal-head">
+        <h2 id="modal-title">{title}</h2>
+        <button
+          type="button"
+          className="icon-button"
+          disabled={busy}
+          aria-label="Закрыть"
+          onClick={onClose}
+        >
+          <X size={20} />
+        </button>
+      </div>
+      {children}
+    </dialog>
+  );
+}
+export function answerLabel(answer: Answer, criterion: Criterion) {
+  if (answer === null) return "N/A";
+  if (criterion.type === "flag") return answer ? "Обнаружено" : "Не обнаружено";
+  if (typeof answer === "boolean") return answer ? "Да" : "Нет";
+  return `${answer} / ${Math.max(...criterion.scale.map((s) => s.value), 0)}`;
+}
+export function scoreLabel(value: number | null) {
+  return value === null
+    ? "—"
+    : value.toLocaleString("ru-RU", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+}
+export function dateLabel(value: string) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Almaty",
+  }).format(new Date(value));
+}
+export function AnswerSelect({
+  criterion,
+  value,
+  onChange,
+  id,
+  disabled,
+}: {
+  criterion: Criterion;
+  value: Answer;
+  onChange: (a: Answer) => void;
+  id: string;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      id={id}
+      className="select"
+      value={value === null ? "na" : String(value)}
+      disabled={disabled}
+      onChange={(e) =>
+        onChange(
+          e.target.value === "na"
+            ? null
+            : criterion.type === "scale"
+              ? Number(e.target.value)
+              : e.target.value === "true",
+        )
+      }
+    >
+      {criterion.type === "scale" ? (
+        criterion.scale.map((s) => (
+          <option key={s.value} value={s.value}>
+            {s.value} — {s.label}
+          </option>
+        ))
+      ) : (
+        <>
+          <option value="false">
+            {criterion.type === "flag" ? "Не обнаружено" : "Нет"}
+          </option>
+          <option value="true">
+            {criterion.type === "flag" ? "Обнаружено" : "Да"}
+          </option>
+        </>
+      )}
+      {criterion.allowNA && <option value="na">N/A — неприменимо</option>}
+    </select>
+  );
+}
+const speakerLabels = {
+  operator: "Оператор",
+  client: "Клиент",
+  bot: "Бот",
+  system: "Система",
+};
+export function EvidenceCard({
+  evidence,
+  onSelect,
+}: {
+  evidence: Evidence;
+  onSelect: (ids: string[]) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [height, setHeight] = useState(0);
+  const textRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useEffect(() => {
+    const node = textRef.current;
+    if (!node) return;
+    const measure = () => setHeight(node.scrollHeight);
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    measure();
+    return () => observer.disconnect();
+  }, [evidence.quote]);
+  const long = height > 66;
+  return (
+    <div className="evidence-card">
+      <button
+        type="button"
+        className="evidence"
+        onClick={() => onSelect([...evidence.messageIds])}
+        aria-label={`${evidence.kind === "range" ? "Проверенный участок" : "Доказательство"}: перейти к репликам`}
+      >
+        <span>
+          <MessageSquare size={14} />
+          {evidence.kind === "range" ? "Проверенный участок" : "Доказательство"}
+          <ArrowUpRight size={14} />
+        </span>
+        <div
+          id={id}
+          className={`evidence-preview ${!expanded && long ? "is-truncated" : ""}`}
+          style={{ maxHeight: expanded ? Math.max(height, 66) : 66 }}
+        >
+          <div ref={textRef}>
+            {evidence.kind === "range" ? (
+              <p className="evidence-range">
+                Проверен участок:{" "}
+                {evidence.quote || "Открыть участок транскрипта"}
+              </p>
+            ) : (
+              <q>{evidence.quote}</q>
+            )}
+          </div>
+        </div>
+      </button>
+      {long && (
+        <button
+          type="button"
+          className="evidence-expand"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Свернуть" : "Развернуть цитату"}
+          <span aria-hidden="true">{expanded ? "−" : "+"}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function Transcript({
+  conversation,
+  highlighted = [],
+  onClear,
+}: {
+  conversation: Conversation;
+  highlighted?: string[];
+  onClear?: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [audioError, setAudioError] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [localAudio, setLocalAudio] = useState<{
+    id: string;
+    url: string;
+  } | null>(null);
+  const audioSource =
+    localAudio?.id === conversation.id ? localAudio.url : conversation.audioUrl;
+  useEffect(() => {
+    if (
+      !import.meta.env.DEV ||
+      conversation.channel !== "voice call" ||
+      !/^[a-zA-Z0-9_-]{1,80}$/.test(conversation.externalId)
+    )
+      return;
+    const controller = new AbortController();
+    const url = `/__local/audio/${conversation.externalId}.mp3`;
+    fetch(url, { method: "HEAD", signal: controller.signal })
+      .then((response) => {
+        if (
+          response.ok &&
+          response.headers.get("Content-Type")?.startsWith("audio/")
+        ) {
+          setLocalAudio({ id: conversation.id, url });
+          setAudioError(false);
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [conversation.id, conversation.externalId, conversation.channel]);
+  const pendingSeek = useRef<number | null>(null);
+  const [seekTarget, setSeekTarget] = useState<number | null>(null);
+  const [seekStatus, setSeekStatus] = useState("");
+  function applySeek() {
+    const audio = audioRef.current;
+    const seconds = pendingSeek.current;
+    if (!audio || seconds === null || audio.readyState < 1) return;
+    if (Number.isFinite(audio.duration) && seconds > audio.duration) {
+      setSeekStatus("Этот момент выходит за длительность записи.");
+      pendingSeek.current = null;
+      return;
+    }
+    try {
+      audio.currentTime = seconds;
+      pendingSeek.current = null;
+      setSeekStatus(
+        audio.paused
+          ? "Позиция выбрана. Нажмите ▶ для прослушивания."
+          : "Воспроизведение с выбранного момента.",
+      );
+    } catch {
+      setSeekStatus("Не удалось перейти к этому моменту записи.");
+    }
+  }
+  function seekTo(seconds: number | null) {
+    if (seconds === null) return;
+    setSeekTarget(seconds);
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.error) {
+      setSeekStatus("Запись недоступна — выделен момент в тексте.");
+      return;
+    }
+    pendingSeek.current = seconds;
+    if (audio.readyState >= 1) applySeek();
+    else {
+      setSeekStatus("Загружаем запись для перехода…");
+      audio.load();
+    }
+  }
+  const refs = useRef<Record<string, HTMLDivElement | null>>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hasEvidence = conversation.messages.some((message) =>
+    highlighted.includes(message.id),
+  );
+  useEffect(() => {
+    const first = conversation.messages.find((message) =>
+      highlighted.includes(message.id),
+    );
+    const target = first ? refs.current[first.id] : null;
+    const container = scrollRef.current;
+    if (first) seekTo(messageOffset(conversation.messages, first));
+    if (target && container) {
+      if (
+        document.documentElement.dataset.motion !== "off" &&
+        !matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        for (const id of highlighted) {
+          refs.current[id]?.animate(
+            [
+              { outlineColor: "#a78bfa", outlineOffset: "7px" },
+              { outlineColor: "#6d28d9", outlineOffset: "2px" },
+            ],
+            { duration: 850, easing: "cubic-bezier(.22,1,.36,1)" },
+          );
+        }
+      }
+      const behavior =
+        document.documentElement.dataset.motion === "full" &&
+        !matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "smooth"
+          : "instant";
+      container.scrollTo({
+        top:
+          container.scrollTop +
+          target.getBoundingClientRect().top -
+          container.getBoundingClientRect().top -
+          Math.max(16, (container.clientHeight - target.clientHeight) / 2),
+        behavior,
+      });
+      if (window.innerWidth < 980)
+        container.parentElement?.scrollIntoView({ behavior, block: "start" });
+    }
+  }, [highlighted, conversation.id]);
+  useEffect(() => {
+    setAudioError(false);
+    setQuery("");
+    pendingSeek.current = null;
+    setSeekTarget(null);
+    setSeekStatus("");
+  }, [conversation.id]);
+  const matched = query.trim()
+    ? conversation.messages.filter((m) =>
+        m.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+      )
+    : [];
+  function messageText(m: Message) {
+    const q = query.trim();
+    if (!q) return m.text;
+    const index = m.text.toLocaleLowerCase().indexOf(q.toLocaleLowerCase());
+    return index < 0 ? (
+      m.text
+    ) : (
+      <>
+        {m.text.slice(0, index)}
+        <mark>{m.text.slice(index, index + q.length)}</mark>
+        {m.text.slice(index + q.length)}
+      </>
+    );
+  }
+  return (
+    <section className="transcript-panel panel" aria-label="Транскрипт диалога">
+      <div className="panel-heading">
+        <div>
+          <h2>Транскрипт</h2>
+          <span>
+            {conversation.messages.length} реплик · время от первой реплики
+          </span>
+        </div>
+        <span className="badge quiet">{conversation.language}</span>
+      </div>
+      {conversation.channel === "voice call" && (
+        <div className="audio-panel">
+          <Headphones size={21} />
+          <div>
+            <strong>Запись разговора</strong>
+            {audioSource ? (
+              <>
+                <AudioPlayer
+                  audioRef={audioRef}
+                  src={audioSource}
+                  onReady={applySeek}
+                  onSeek={seekTo}
+                  onError={() => {
+                    setAudioError(true);
+                    pendingSeek.current = null;
+                    setSeekStatus(
+                      "Запись недоступна — выделен момент в тексте.",
+                    );
+                  }}
+                />
+                <p className="audio-timing-note">
+                  Привязка к первой реплике; начало аудио может отличаться.
+                </p>
+                {seekTarget !== null && (
+                  <div className="audio-seek-status" role="status">
+                    <span className="selected-time">
+                      {elapsedLabel(seekTarget)}
+                    </span>
+                    <span>{seekStatus}</span>
+                  </div>
+                )}
+                {audioError && (
+                  <p className="audio-error">
+                    Запись недоступна. Транскрипт остаётся доступным.
+                  </p>
+                )}
+                <a href={audioSource} target="_blank" rel="noreferrer">
+                  Открыть запись <ExternalLink size={12} />
+                </a>
+              </>
+            ) : (
+              <p>Аудиозапись недоступна</p>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="transcript-search">
+        <Search size={16} />
+        <input
+          aria-label="Поиск в транскрипте"
+          name="transcriptSearch"
+          autoComplete="off"
+          placeholder="Найти в разговоре…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {query && (
+          <>
+            <span>{matched.length}</span>
+            <button
+              className="icon-button"
+              aria-label="Очистить поиск в транскрипте"
+              onClick={() => setQuery("")}
+            >
+              <X size={14} />
+            </button>
+          </>
+        )}
+      </div>
+      {hasEvidence && (
+        <div className="evidence-notice" role="status">
+          Выделено доказательство
+          <button className="button ghost small" onClick={onClear}>
+            Снять выделение
+          </button>
+        </div>
+      )}
+      {query && matched.length === 0 && (
+        <p className="search-no-match" role="status">
+          Совпадений нет. Все реплики остаются доступными.
+        </p>
+      )}
+      <div
+        className={`messages ${hasEvidence ? "has-evidence-focus" : ""}`}
+        ref={scrollRef}
+      >
+        {conversation.messages.map((m) => (
+          <div
+            key={m.id}
+            ref={(el) => {
+              refs.current[m.id] = el;
+            }}
+            className={`message ${m.speaker} ${highlighted.includes(m.id) ? "highlighted" : ""} ${matched.includes(m) ? "matched" : ""}`}
+            data-message-id={m.id}
+          >
+            <div className="message-meta">
+              <span className={`speaker-dot ${m.speaker}`} />
+              <strong>{speakerLabels[m.speaker]}</strong>
+              {conversation.channel === "voice call" &&
+              audioSource &&
+              messageOffset(conversation.messages, m) !== null ? (
+                <button
+                  type="button"
+                  className={`message-time ${highlighted.includes(m.id) || seekTarget === messageOffset(conversation.messages, m) ? "selected-time" : ""}`}
+                  title={`Исходное время: ${m.timestamp}`}
+                  aria-label={`Перейти к ${elapsedLabel(messageOffset(conversation.messages, m))} в аудио`}
+                  onClick={() =>
+                    seekTo(messageOffset(conversation.messages, m))
+                  }
+                >
+                  {elapsedLabel(messageOffset(conversation.messages, m))}
+                </button>
+              ) : (
+                <time
+                  className={highlighted.includes(m.id) ? "selected-time" : ""}
+                  title={`Исходное время: ${m.timestamp}`}
+                >
+                  {elapsedLabel(messageOffset(conversation.messages, m))}
+                </time>
+              )}
+              {highlighted.includes(m.id) && (
+                <span className="evidence-tag">
+                  <ArrowUpRight size={11} />
+                  Доказательство
+                </span>
+              )}
+            </div>
+            <p>{messageText(m)}</p>
+          </div>
+        ))}
+      </div>
+      <div className="transcript-end">
+        <span />
+        Конец разговора
+        <span />
+      </div>
+    </section>
+  );
+}

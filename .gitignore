@@ -16,9 +16,13 @@ logs/
 *.sqlite
 *.sqlite3
 *.db
-node_modules/
+node_modules
 dist/
 build/
 .venv/
 __pycache__/
 *.pyc
+
+# Local conversation datasets
+dev.json
+DEV.json
