@@ -29,6 +29,64 @@ export default defineConfig(({ mode }) => {
         name: "local-private-dataset",
         apply: "serve",
         configureServer(server) {
+          // Development only: private audio stays outside public/ and the build.
+          server.middlewares.use("/__local/audio", async (req, res) => {
+            res.setHeader("Cache-Control", "no-store");
+            res.setHeader("X-Content-Type-Options", "nosniff");
+            const origin = req.headers.origin;
+            const match = /^\/([a-zA-Z0-9_-]{1,80})\.mp3$/.exec(req.url || "");
+            if (
+              !match ||
+              !["GET", "HEAD"].includes(req.method || "") ||
+              (origin &&
+                !/^http:\/\/(localhost|127\.0\.0\.1):5173$/.test(origin)) ||
+              req.headers["sec-fetch-site"] === "cross-site"
+            ) {
+              res.statusCode = 403;
+              res.end();
+              return;
+            }
+            try {
+              const audio = await readFile(
+                fileURLToPath(
+                  new URL(`../.local/audio/${match[1]}.mp3`, import.meta.url),
+                ),
+              );
+              res.setHeader("Content-Type", "audio/mpeg");
+              res.setHeader("Accept-Ranges", "bytes");
+              let start = 0,
+                end = audio.length - 1;
+              if (req.headers.range) {
+                const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range);
+                if (
+                  !range ||
+                  Number(range[1]) >= audio.length ||
+                  (range[2] && Number(range[2]) < Number(range[1]))
+                ) {
+                  res.statusCode = 416;
+                  res.setHeader("Content-Range", `bytes */${audio.length}`);
+                  res.end();
+                  return;
+                }
+                start = Number(range[1]);
+                if (range[2]) end = Math.min(end, Number(range[2]));
+                res.statusCode = 206;
+                res.setHeader(
+                  "Content-Range",
+                  `bytes ${start}-${end}/${audio.length}`,
+                );
+              }
+              res.setHeader("Content-Length", end - start + 1);
+              res.end(
+                req.method === "HEAD"
+                  ? undefined
+                  : audio.subarray(start, end + 1),
+              );
+            } catch {
+              res.statusCode = 404;
+              res.end();
+            }
+          });
           server.middlewares.use("/__local/annotations", async (req, res) => {
             res.setHeader("Cache-Control", "no-store");
             res.setHeader("Content-Type", "application/json; charset=utf-8");

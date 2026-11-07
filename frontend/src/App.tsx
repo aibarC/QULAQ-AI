@@ -66,6 +66,7 @@ import {
   dateLabel,
   Empty,
   ErrorBox,
+  EvidenceCard,
   Logo,
   Modal,
   scoreLabel,
@@ -171,6 +172,7 @@ export default function App() {
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
   const [appealFilter, setAppealFilter] = useState("all");
+  const [appealRefreshError, setAppealRefreshError] = useState("");
   const [highlighted, setHighlighted] = useState<string[]>([]);
   const [appealDraft, setAppealDraft] = useState<{
     evaluation: Evaluation;
@@ -321,6 +323,52 @@ export default function App() {
     return () => window.removeEventListener("hashchange", handler);
   }, []);
   useEffect(() => {
+    if (
+      adapter.mode !== "api" ||
+      loading ||
+      !["appeals", "appeal"].includes(route.page)
+    )
+      return;
+    let cancelled = false;
+    let running = false;
+    const update = async () => {
+      if (
+        cancelled ||
+        running ||
+        busyRef.current ||
+        document.visibilityState === "hidden"
+      )
+        return;
+      running = true;
+      const epoch = mutationEpoch.current;
+      try {
+        const next = await adapter.load();
+        if (!cancelled && !busyRef.current && mutationEpoch.current === epoch) {
+          setWorkspace(next);
+          setAppealRefreshError("");
+        }
+      } catch {
+        if (!cancelled)
+          setAppealRefreshError(
+            "Не удалось обновить обращения. Показаны последние сохранённые данные; повторим обновление автоматически.",
+          );
+      } finally {
+        running = false;
+      }
+    };
+    void update();
+    const timer = window.setInterval(() => void update(), 15000);
+    const onFocus = () => void update();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [route.page, role, loading]);
+  useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 5000);
     return () => clearTimeout(timer);
@@ -381,6 +429,7 @@ export default function App() {
       return;
     setDirty(false);
     setRole(next);
+    setAppealFilter(next === "reviewer" ? "pending" : "all");
     try {
       sessionStorage.setItem("qulaq-role", next);
     } catch {
@@ -602,6 +651,7 @@ export default function App() {
       );
       setAppealDraft(null);
       setComment("");
+      setAppealFilter("all");
       if (a) openAppeal(a.id);
     } catch (e) {
       setFormError(errorMessage(e));
@@ -1549,6 +1599,10 @@ export default function App() {
                           selectedId={route.evaluationId || ""}
                           onSelect={(id) => go({ ...route, evaluationId: id })}
                           appeals={workspace.appeals}
+                          onViewAppeals={() => {
+                            setAppealFilter("all");
+                            go({ page: "appeals" });
+                          }}
                           evaluating={
                             (busy === "evaluate" &&
                               evaluatingRecord === conversation.id) ||
@@ -1643,6 +1697,9 @@ export default function App() {
                       </span>
                     )}
                   </div>
+                  {appealRefreshError && (
+                    <ErrorBox>{appealRefreshError}</ErrorBox>
+                  )}
                   <section className="panel appeals-panel">
                     <div
                       className="appeal-tabs"
@@ -1829,6 +1886,38 @@ export default function App() {
             }}
           >
             <div className="modal-body">
+              <label className="field" htmlFor="appeal-criterion">
+                Критерий для пересмотра
+                <select
+                  id="appeal-criterion"
+                  className="select"
+                  disabled={busy === "appeal"}
+                  value={appealDraft.criterion.id}
+                  onChange={(event) => {
+                    const criterion =
+                      appealDraft.evaluation.checklist.criteria.find(
+                        (item) => item.id === event.target.value,
+                      );
+                    if (criterion)
+                      setAppealDraft({ ...appealDraft, criterion });
+                  }}
+                >
+                  {appealDraft.evaluation.checklist.criteria
+                    .filter(
+                      (criterion) =>
+                        !workspace.appeals.some(
+                          (appeal) =>
+                            appeal.evaluationId === appealDraft.evaluation.id &&
+                            appeal.criterionId === criterion.id,
+                        ),
+                    )
+                    .map((criterion) => (
+                      <option value={criterion.id} key={criterion.id}>
+                        {criterion.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
               <div className="appeal-context">
                 <span className="badge quiet">
                   {
@@ -2089,26 +2178,7 @@ function AppealDetail({
               </div>
               <p>{result.explanation}</p>
               {result.evidence.map((ev, i) => (
-                <button
-                  className="evidence"
-                  key={i}
-                  onClick={() => setHighlighted(ev.messageIds)}
-                >
-                  <span>
-                    <MessageSquare size={14} />
-                    {ev.kind === "range"
-                      ? "Проверенный участок"
-                      : "Доказательство"}
-                    <ArrowUpRight size={14} />
-                  </span>
-                  {ev.kind === "range" ? (
-                    <p className="evidence-range">
-                      Проверен участок: {ev.quote}
-                    </p>
-                  ) : (
-                    <q>{ev.quote}</q>
-                  )}
-                </button>
+                <EvidenceCard key={i} evidence={ev} onSelect={setHighlighted} />
               ))}
             </div>
             <div className="appeal-section user-comment">

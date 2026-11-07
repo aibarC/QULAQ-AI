@@ -118,7 +118,8 @@ test("real local HTTP persists an uploaded TXT, evaluates through the injected s
     path: "/tmp/qulaq-http-result.png",
     animations: "disabled",
   });
-  await empathy.getByRole("button", { name: "Оспорить", exact: true }).click();
+  await page.getByRole("button", { name: "Подать апелляцию", exact: true }).click();
+  await page.getByRole("combobox", { name: "Критерий для пересмотра", exact: true }).selectOption("c5");
   await page
     .getByLabel("Почему вы не согласны?")
     .fill("Синтетический запрос на проверку сохранения решения.");
@@ -128,8 +129,20 @@ test("real local HTTP persists an uploaded TXT, evaluates through the injected s
   await expect(
     page.getByRole("heading", { name: "Передано проверяющему", exact: true }),
   ).toBeVisible();
+  const appealHash = new URL(page.url()).hash;
+  await page.locator(".sidebar").getByRole("button", { name: /^Мои апелляции/ }).click();
+  await expect(page.getByRole("heading", { name: "Мои апелляции", exact: true })).toBeVisible();
+  await page.getByRole("group", { name: "Фильтр апелляций", exact: true }).getByRole("button", { name: /^Ожидают/ }).click();
+  await expect(page.locator(".appeal-row")).toHaveCount(1);
+  await expect(page.locator(".appeal-row")).toContainText("Эмпатия и клиентоориентированность");
+  await expect(page.locator(".appeal-row")).toContainText("Ожидает рассмотрения");
+  await expect(page.locator(".appeal-row")).toContainText("Синтетический запрос на проверку сохранения решения.");
   await page.getByRole("button", { name: "Проверяющий", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Апелляции", exact: true })).toBeVisible();
+  await expect(page.locator(".appeal-row")).toHaveCount(1);
+  await expect(page.locator(".appeal-row")).toContainText("Ожидает рассмотрения");
   await page.locator(".appeal-row").first().click();
+  await expect.poll(() => new URL(page.url()).hash).toBe(appealHash);
   await page
     .getByRole("radio", {
       name: "Изменить оценку Выбрать другой допустимый ответ",
@@ -148,9 +161,52 @@ test("real local HTTP persists an uploaded TXT, evaluates through the injected s
   await expect(page.locator(".decision-total")).toContainText("100,00");
   await page.reload();
   await expect(page.locator(".decision-total")).toContainText("100,00");
+  await page.getByRole("button", { name: "Пользователь", exact: true }).click();
+  await page.locator(".sidebar").getByRole("button", { name: /^Мои апелляции/ }).click();
+  await page.getByRole("group", { name: "Фильтр апелляций", exact: true }).getByRole("button", { name: /^Рассмотрены/ }).click();
+  await expect(page.locator(".appeal-row")).toHaveCount(1);
+  await expect(page.locator(".appeal-row .badge.resolved")).toHaveText("Рассмотрено");
+  await page.locator(".appeal-row").click();
+  await expect.poll(() => new URL(page.url()).hash).toBe(appealHash);
+  await expect(page.locator(".decision-total")).toContainText("100,00");
+  await expect(page.getByRole("button", { name: "Сохранить решение", exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator(".decision-total")).toContainText("100,00");
   expect(requests.filter((path) => path === "/api/evaluations")).toHaveLength(
     1,
   );
+});
+
+test("390px evaluated result exposes an appeal action and criterion selection without opening result details", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "enabled-fixture", "Enabled synthetic evaluator only.");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const posts: string[] = [];
+  page.on("request", request => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
+  await page.goto("/");
+  await expect(page.locator(".conversation-row").first()).toBeVisible();
+  const upload = page.getByRole("region", { name: "Загрузка транскрипта", exact: true });
+  await upload.getByLabel("Файл транскрипта", { exact: true }).setInputFiles({
+    name: "http-mobile-appeal.txt", mimeType: "text/plain",
+    buffer: Buffer.from("Клиент: Мобильный синтетический вопрос.\nОператор: Мобильный синтетический ответ."),
+  });
+  await upload.getByRole("button", { name: "Открыть для анализа", exact: true }).click();
+  await page.getByRole("button", { name: "Оценить", exact: true }).click();
+  await expect(page.locator(".score-number")).toHaveText("85,00/ 100");
+  const action = page.getByRole("button", { name: "Подать апелляцию", exact: true });
+  await action.scrollIntoViewIfNeeded();
+  await expect(action).toBeInViewport();
+  await action.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: "Критерий для пересмотра", exact: true }).selectOption("c5");
+  await expect(dialog.getByLabel("Почему вы не согласны?")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect((await dialog.boundingBox())!.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "/tmp/qulaq-appeal-mobile.png", animations: "disabled" });
+  await dialog.getByRole("button", { name: "Отмена", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(posts.filter(path => path === "/api/evaluations")).toHaveLength(1);
+  expect(posts.filter(path => path === "/api/appeals")).toHaveLength(0);
 });
 
 test("disabled local server rejects evaluation clearly without fabricating a result or retrying POST", async ({

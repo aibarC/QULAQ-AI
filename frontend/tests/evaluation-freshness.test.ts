@@ -13,6 +13,32 @@ async function previouslyEvaluated() {
   return local.evaluate(demoConversation.id, defaultChecklist.id);
 }
 
+test("a delayed queue refresh cannot replace the newer baseline used to confirm an analysis", async () => {
+  const old = await previouslyEvaluated();
+  const newer = structuredClone(old);
+  newer.evaluations[0].id = "newer-run";
+  let requests = 0;
+  let release!: (value: Response) => void;
+  const api = createApiAdapter("/api", async () => {
+    requests++;
+    if (requests === 2)
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    return new Response(JSON.stringify(requests === 1 ? old : newer));
+  });
+  await api.load();
+  const slowRefresh = api.load();
+  await api.load();
+  release(new Response(JSON.stringify(old)));
+  await slowRefresh;
+  await assert.rejects(
+    api.evaluate(demoConversation.id, defaultChecklist.id),
+    /новую оценку/,
+  );
+  assert.equal(requests, 4);
+});
+
 function queuedApi(states: Workspace[]) {
   const calls: string[] = [];
   const api = createApiAdapter(

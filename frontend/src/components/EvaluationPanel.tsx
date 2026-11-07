@@ -25,6 +25,7 @@ import {
   dateLabel,
   Empty,
   ErrorBox,
+  EvidenceCard,
   scoreLabel,
   Spinner,
 } from "./Shared";
@@ -131,6 +132,7 @@ interface Props {
   onEvidence: (ids: string[]) => void;
   onAppeal: (e: Evaluation, c: Criterion) => void;
   onOpenAppeal: (id: string) => void;
+  onViewAppeals: () => void;
 }
 export default function EvaluationPanel(p: Props) {
   const [checklistId, setChecklistId] = useState(p.checklists[0]?.id || "");
@@ -140,6 +142,15 @@ export default function EvaluationPanel(p: Props) {
     p.evaluations.find((e) => e.id === p.selectedId) || p.evaluations.at(-1);
   const isPreview = !actualEvaluation && !!p.previewEvaluation;
   const evaluation = actualEvaluation || p.previewEvaluation;
+  const evaluationAppeals = p.appeals.filter(
+    (item) => item.evaluationId === evaluation?.id,
+  );
+  const appealableCriteria =
+    evaluation?.checklist.criteria.filter(
+      (criterion) =>
+        !evaluationAppeals.some((item) => item.criterionId === criterion.id),
+    ) || [];
+
   const chosen =
     p.checklists.find((c) => c.id === checklistId) || p.checklists[0];
   const isIssue = (r: CriterionResult) => {
@@ -431,6 +442,46 @@ export default function EvaluationPanel(p: Props) {
               <span>Версия {evaluation.checklist.version}</span>
             </div>
           </div>
+          {!isPreview && (
+            <div className="appeal-entry" aria-label="Пересмотр результата">
+              <div>
+                <strong>Не согласны с оценкой?</strong>
+                <p>
+                  Выберите критерий — проверяющий получит вашу причину и весь
+                  диалог.
+                </p>
+              </div>
+              <div className="appeal-entry-actions">
+                <button
+                  className="button primary"
+                  disabled={!appealableCriteria.length}
+                  onClick={() => {
+                    const criterion =
+                      appealableCriteria.find((c) =>
+                        evaluation.results.some(
+                          (r) => r.criterionId === c.id && isIssue(r),
+                        ),
+                      ) || appealableCriteria[0];
+                    if (criterion) p.onAppeal(evaluation, criterion);
+                  }}
+                >
+                  <MessageCircle size={17} /> Подать апелляцию
+                </button>
+                {evaluationAppeals.length > 0 && (
+                  <button
+                    className="button secondary small"
+                    onClick={p.onViewAppeals}
+                  >
+                    Мои апелляции ({evaluationAppeals.length}){" "}
+                    <ArrowUpRight size={14} />
+                  </button>
+                )}
+                {!appealableCriteria.length && (
+                  <span>По всем критериям уже есть обращения.</span>
+                )}
+              </div>
+            </div>
+          )}
           <div
             className="criteria-distribution"
             aria-label="Распределение результатов критериев"
@@ -581,27 +632,7 @@ export default function EvaluationPanel(p: Props) {
                         </span>
                       )}
                       {r.evidence.map((ev, i) => (
-                        <button
-                          key={i}
-                          className="evidence"
-                          onClick={() => p.onEvidence(ev.messageIds)}
-                        >
-                          <span>
-                            <MessageCircle size={14} />
-                            {ev.kind === "range"
-                              ? "Проверенный участок"
-                              : "Доказательство"}
-                            <ArrowUpRight size={14} />
-                          </span>
-                          {ev.kind === "range" ? (
-                            <p className="evidence-range">
-                              Проверен участок:{" "}
-                              {ev.quote || "Открыть участок транскрипта"}
-                            </p>
-                          ) : (
-                            <q>{ev.quote}</q>
-                          )}
-                        </button>
+                        <EvidenceCard key={i} evidence={ev} onSelect={p.onEvidence} />
                       ))}
                       {!isPreview && r.override && (
                         <div className="override">
@@ -623,29 +654,29 @@ export default function EvaluationPanel(p: Props) {
                           </div>
                         </div>
                       )}
-                      {!isPreview && (
-                        <div className="criterion-result-footer">
-                          {appeal ? (
-                            <button
-                              className={`text-button ${appeal.status === "pending" ? "amber" : ""}`}
-                              onClick={() => p.onOpenAppeal(appeal.id)}
-                            >
-                              <MessageCircle size={14} />
-                              {appeal.status === "pending"
-                                ? "Ожидает рассмотрения"
-                                : "Решение проверяющего"}
-                              <ArrowUpRight size={13} />
-                            </button>
-                          ) : (
-                            <button
-                              className="text-button muted"
-                              onClick={() => p.onAppeal(evaluation, c)}
-                            >
-                              <MessageCircle size={14} />
-                              Оспорить
-                            </button>
-                          )}
-                        </div>
+                    </div>
+                  )}
+                  {!isPreview && (
+                    <div className="criterion-result-footer">
+                      {appeal ? (
+                        <button
+                          className={`text-button ${appeal.status === "pending" ? "amber" : ""}`}
+                          onClick={() => p.onOpenAppeal(appeal.id)}
+                        >
+                          <MessageCircle size={14} />
+                          {appeal.status === "pending"
+                            ? "Ожидает рассмотрения"
+                            : "Решение проверяющего"}
+                          <ArrowUpRight size={13} />
+                        </button>
+                      ) : (
+                        <button
+                          className="button secondary small"
+                          onClick={() => p.onAppeal(evaluation, c)}
+                        >
+                          <MessageCircle size={14} />
+                          Оспорить
+                        </button>
                       )}
                     </div>
                   )}

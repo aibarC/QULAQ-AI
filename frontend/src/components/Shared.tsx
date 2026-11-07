@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   X,
@@ -13,12 +13,15 @@ import {
 } from "lucide-react";
 import type {
   Answer,
+  Evidence,
   Criterion,
   Conversation,
   Message,
   Status,
 } from "../lib/types";
 import "./transcript-motion.css";
+import AudioPlayer from "./AudioPlayer";
+import { elapsedLabel, messageOffset } from "../lib/timeline";
 
 export function Spinner() {
   return <LoaderCircle size={17} className="spin" aria-hidden="true" />;
@@ -228,6 +231,73 @@ const speakerLabels = {
   bot: "Бот",
   system: "Система",
 };
+export function EvidenceCard({
+  evidence,
+  onSelect,
+}: {
+  evidence: Evidence;
+  onSelect: (ids: string[]) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [height, setHeight] = useState(0);
+  const textRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useEffect(() => {
+    const node = textRef.current;
+    if (!node) return;
+    const measure = () => setHeight(node.scrollHeight);
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    measure();
+    return () => observer.disconnect();
+  }, [evidence.quote]);
+  const long = height > 66;
+  return (
+    <div className="evidence-card">
+      <button
+        type="button"
+        className="evidence"
+        onClick={() => onSelect([...evidence.messageIds])}
+        aria-label={`${evidence.kind === "range" ? "Проверенный участок" : "Доказательство"}: перейти к репликам`}
+      >
+        <span>
+          <MessageSquare size={14} />
+          {evidence.kind === "range" ? "Проверенный участок" : "Доказательство"}
+          <ArrowUpRight size={14} />
+        </span>
+        <div
+          id={id}
+          className={`evidence-preview ${!expanded && long ? "is-truncated" : ""}`}
+          style={{ maxHeight: expanded ? Math.max(height, 66) : 66 }}
+        >
+          <div ref={textRef}>
+            {evidence.kind === "range" ? (
+              <p className="evidence-range">
+                Проверен участок:{" "}
+                {evidence.quote || "Открыть участок транскрипта"}
+              </p>
+            ) : (
+              <q>{evidence.quote}</q>
+            )}
+          </div>
+        </div>
+      </button>
+      {long && (
+        <button
+          type="button"
+          className="evidence-expand"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Свернуть" : "Развернуть цитату"}
+          <span aria-hidden="true">{expanded ? "−" : "+"}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function Transcript({
   conversation,
   highlighted = [],
@@ -239,6 +309,75 @@ export function Transcript({
 }) {
   const [query, setQuery] = useState("");
   const [audioError, setAudioError] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [localAudio, setLocalAudio] = useState<{
+    id: string;
+    url: string;
+  } | null>(null);
+  const audioSource =
+    localAudio?.id === conversation.id ? localAudio.url : conversation.audioUrl;
+  useEffect(() => {
+    if (
+      !import.meta.env.DEV ||
+      conversation.channel !== "voice call" ||
+      !/^[a-zA-Z0-9_-]{1,80}$/.test(conversation.externalId)
+    )
+      return;
+    const controller = new AbortController();
+    const url = `/__local/audio/${conversation.externalId}.mp3`;
+    fetch(url, { method: "HEAD", signal: controller.signal })
+      .then((response) => {
+        if (
+          response.ok &&
+          response.headers.get("Content-Type")?.startsWith("audio/")
+        ) {
+          setLocalAudio({ id: conversation.id, url });
+          setAudioError(false);
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [conversation.id, conversation.externalId, conversation.channel]);
+  const pendingSeek = useRef<number | null>(null);
+  const [seekTarget, setSeekTarget] = useState<number | null>(null);
+  const [seekStatus, setSeekStatus] = useState("");
+  function applySeek() {
+    const audio = audioRef.current;
+    const seconds = pendingSeek.current;
+    if (!audio || seconds === null || audio.readyState < 1) return;
+    if (Number.isFinite(audio.duration) && seconds > audio.duration) {
+      setSeekStatus("Этот момент выходит за длительность записи.");
+      pendingSeek.current = null;
+      return;
+    }
+    try {
+      audio.currentTime = seconds;
+      pendingSeek.current = null;
+      setSeekStatus(
+        audio.paused
+          ? "Позиция выбрана. Нажмите ▶ для прослушивания."
+          : "Воспроизведение с выбранного момента.",
+      );
+    } catch {
+      setSeekStatus("Не удалось перейти к этому моменту записи.");
+    }
+  }
+  function seekTo(seconds: number | null) {
+    if (seconds === null) return;
+    setSeekTarget(seconds);
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.error) {
+      setSeekStatus("Запись недоступна — выделен момент в тексте.");
+      return;
+    }
+    pendingSeek.current = seconds;
+    if (audio.readyState >= 1) applySeek();
+    else {
+      setSeekStatus("Загружаем запись для перехода…");
+      audio.load();
+    }
+  }
   const refs = useRef<Record<string, HTMLDivElement | null>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasEvidence = conversation.messages.some((message) =>
@@ -250,7 +389,22 @@ export function Transcript({
     );
     const target = first ? refs.current[first.id] : null;
     const container = scrollRef.current;
+    if (first) seekTo(messageOffset(conversation.messages, first));
     if (target && container) {
+      if (
+        document.documentElement.dataset.motion !== "off" &&
+        !matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        for (const id of highlighted) {
+          refs.current[id]?.animate(
+            [
+              { outlineColor: "#a78bfa", outlineOffset: "7px" },
+              { outlineColor: "#6d28d9", outlineOffset: "2px" },
+            ],
+            { duration: 850, easing: "cubic-bezier(.22,1,.36,1)" },
+          );
+        }
+      }
       const behavior =
         document.documentElement.dataset.motion === "full" &&
         !matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -271,6 +425,9 @@ export function Transcript({
   useEffect(() => {
     setAudioError(false);
     setQuery("");
+    pendingSeek.current = null;
+    setSeekTarget(null);
+    setSeekStatus("");
   }, [conversation.id]);
   const matched = query.trim()
     ? conversation.messages.filter((m) =>
@@ -296,7 +453,9 @@ export function Transcript({
       <div className="panel-heading">
         <div>
           <h2>Транскрипт</h2>
-          <span>{conversation.messages.length} реплик</span>
+          <span>
+            {conversation.messages.length} реплик · время от первой реплики
+          </span>
         </div>
         <span className="badge quiet">{conversation.language}</span>
       </div>
@@ -305,26 +464,38 @@ export function Transcript({
           <Headphones size={21} />
           <div>
             <strong>Запись разговора</strong>
-            {conversation.audioUrl ? (
+            {audioSource ? (
               <>
-                <audio
-                  key={conversation.audioUrl}
-                  controls
-                  preload="none"
-                  src={conversation.audioUrl}
-                  onError={() => setAudioError(true)}
-                  aria-label="Запись разговора"
+                <AudioPlayer
+                  audioRef={audioRef}
+                  src={audioSource}
+                  onReady={applySeek}
+                  onSeek={seekTo}
+                  onError={() => {
+                    setAudioError(true);
+                    pendingSeek.current = null;
+                    setSeekStatus(
+                      "Запись недоступна — выделен момент в тексте.",
+                    );
+                  }}
                 />
+                <p className="audio-timing-note">
+                  Привязка к первой реплике; начало аудио может отличаться.
+                </p>
+                {seekTarget !== null && (
+                  <div className="audio-seek-status" role="status">
+                    <span className="selected-time">
+                      {elapsedLabel(seekTarget)}
+                    </span>
+                    <span>{seekStatus}</span>
+                  </div>
+                )}
                 {audioError && (
                   <p className="audio-error">
                     Запись недоступна. Транскрипт остаётся доступным.
                   </p>
                 )}
-                <a
-                  href={conversation.audioUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
+                <a href={audioSource} target="_blank" rel="noreferrer">
                   Открыть запись <ExternalLink size={12} />
                 </a>
               </>
@@ -386,11 +557,28 @@ export function Transcript({
             <div className="message-meta">
               <span className={`speaker-dot ${m.speaker}`} />
               <strong>{speakerLabels[m.speaker]}</strong>
-              <time title={m.timestamp}>
-                {m.timestamp.includes("T")
-                  ? m.timestamp.slice(11, 19)
-                  : m.timestamp}
-              </time>
+              {conversation.channel === "voice call" &&
+              audioSource &&
+              messageOffset(conversation.messages, m) !== null ? (
+                <button
+                  type="button"
+                  className={`message-time ${highlighted.includes(m.id) || seekTarget === messageOffset(conversation.messages, m) ? "selected-time" : ""}`}
+                  title={`Исходное время: ${m.timestamp}`}
+                  aria-label={`Перейти к ${elapsedLabel(messageOffset(conversation.messages, m))} в аудио`}
+                  onClick={() =>
+                    seekTo(messageOffset(conversation.messages, m))
+                  }
+                >
+                  {elapsedLabel(messageOffset(conversation.messages, m))}
+                </button>
+              ) : (
+                <time
+                  className={highlighted.includes(m.id) ? "selected-time" : ""}
+                  title={`Исходное время: ${m.timestamp}`}
+                >
+                  {elapsedLabel(messageOffset(conversation.messages, m))}
+                </time>
+              )}
               {highlighted.includes(m.id) && (
                 <span className="evidence-tag">
                   <ArrowUpRight size={11} />

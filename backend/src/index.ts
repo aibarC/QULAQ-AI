@@ -35,6 +35,7 @@ async function start() {
         : "https://llm.telecom.kz/v1",
       getToken: () => process.env.LLM_API_TOKEN,
       model: config.model,
+      maxTokens: config.maxTokens,
       quotaPath: config.quotaPath,
     }),
   });

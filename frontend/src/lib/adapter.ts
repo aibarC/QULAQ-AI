@@ -375,10 +375,13 @@ export function createApiAdapter(
   const pollInterval = timing.pollIntervalMs ?? 1000;
   const evaluationTimeout = timing.evaluationTimeoutMs ?? 120_000;
   let latest: Workspace | undefined;
+  let requestSequence = 0;
+  let latestSequence = 0;
   const base = baseUrl.replace(/\/$/, "");
   if (!/^\/api(?:\/[a-zA-Z0-9_-]+)*$/.test(base))
     throw new Error("API должен использовать путь этого сайта, например /api.");
   const request = async (path: string, data?: unknown): Promise<Workspace> => {
+    const sequence = ++requestSequence;
     const response = await fetchWithTimeout(
       fetcher,
       `${base}${path}`,
@@ -390,8 +393,12 @@ export function createApiAdapter(
             body: JSON.stringify(data),
           },
     );
-    latest = parseWorkspace(await readResponse(response));
-    return clone(latest);
+    const confirmed = parseWorkspace(await readResponse(response));
+    if (sequence >= latestSequence) {
+      latest = confirmed;
+      latestSequence = sequence;
+    }
+    return clone(confirmed);
   };
   return {
     mode: "api",

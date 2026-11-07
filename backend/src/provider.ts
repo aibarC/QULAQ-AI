@@ -12,6 +12,7 @@ type ProviderOptions = {
   quotaPath: string;
   fetcher?: typeof fetch;
   timeoutMs?: number;
+  maxTokens?: number;
 };
 
 /** No warmup, model listing, retries, redirects or calls before the one-use gate. */
@@ -90,7 +91,7 @@ export function createGatewayEvaluator(options: ProviderOptions) {
         body: JSON.stringify({
           model: options.model,
           temperature: 0,
-          max_tokens: 4096,
+          max_tokens: options.maxTokens ?? 4096,
           messages: buildEvaluationMessages(conversation, checklist),
         }),
         signal: AbortSignal.any([

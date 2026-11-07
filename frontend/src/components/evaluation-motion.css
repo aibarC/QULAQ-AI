@@ -647,3 +647,49 @@ html[data-motion="moderate"]
   svg {
   transition: none;
 }
+
+.appeal-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border: 1px solid #d9ceef;
+  border-radius: 16px;
+  background: linear-gradient(115deg, #f5f0ff, #f0f7ff);
+}
+.appeal-entry strong {
+  color: #493965;
+  font-size: 14px;
+}
+.appeal-entry p {
+  color: #756382;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 6px 0 0;
+  max-width: 42ch;
+}
+.appeal-entry-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.appeal-entry-actions > span {
+  font-size: 11px;
+  color: #756382;
+}
+.criterion-result > .criterion-result-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #eee7f6;
+  margin: 0;
+}
+@media (max-width: 1100px) {
+  .appeal-entry {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .appeal-entry-actions {
+    align-items: stretch;
+  }
+}
