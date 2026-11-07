@@ -8,15 +8,15 @@ import { createLayaClassifier } from "./laya.ts";
 
 async function start() {
   const config = getRuntimeConfig();
-  // Normal startup does not even load the secret file. Only the explicit, future
-  // one-test command can load it inside the server process, without printing it.
-  if (config.allowEvaluation) {
-    if (!config.model)
-      throw new Error(
-        "Specify an explicitly selected model before enabling a test.",
-      );
-    process.loadEnvFile(resolve(repositoryRoot, ".env"));
-  }
+  // Resolve secrets only inside a manual model action, never while opening the app.
+  let environmentLoaded = false;
+  const loadModelEnvironment = () => {
+    if (!environmentLoaded) {
+      try { process.loadEnvFile(resolve(repositoryRoot, ".env")); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      environmentLoaded = true;
+    }
+  };
   const store = await createStore(config.workspacePath, {
     conversations: [],
     checklists: [initialChecklist],
@@ -31,13 +31,15 @@ async function start() {
     : undefined;
   const provider = createGatewayProvider({
       enabled: config.allowEvaluation,
-      baseUrl: config.allowEvaluation
-        ? (process.env.LLM_BASE_URL ?? "")
-        : "https://llm.telecom.kz/v1",
-      getToken: () => process.env.LLM_API_TOKEN,
+      get baseUrl() {
+        if (config.allowEvaluation) loadModelEnvironment();
+        return process.env.LLM_BASE_URL ?? "https://llm.telecom.kz/v1";
+      },
+      getToken: () => { loadModelEnvironment(); return process.env.LLM_API_TOKEN; },
       model: config.model,
       maxTokens: config.maxTokens,
       quotaPath: config.quotaPath,
+      oneShot: config.oneShot,
       localClassifier,
     });
   const app = createApp({
@@ -67,7 +69,7 @@ async function start() {
     console.log(`QULAQ API: http://${config.host}:${config.port}/api`);
     console.log(
       config.allowEvaluation
-        ? "Разрешён максимум один запрос модели; повтор и перезапуск не восстанавливают разрешение."
+        ? "Модель вызывается только по нажатию кнопки анализа или улучшения. Автоматических запусков и повторов нет."
         : "Внешние вызовы Kimi отключены. Файл с токеном не загружался.",
     );
   });

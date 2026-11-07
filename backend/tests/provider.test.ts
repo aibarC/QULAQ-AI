@@ -1,9 +1,9 @@
 import { after, mock, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createGatewayEvaluator } from "../src/provider.ts";
+import { createGatewayEvaluator, createGatewayProvider } from "../src/provider.ts";
 import { getRuntimeConfig } from "../src/config.ts";
 import { demoConversation } from "../../frontend/src/lib/fixtures.ts";
 import { initialChecklist } from "../src/scoring.ts";
@@ -53,6 +53,7 @@ const options = (quotaPath: string, fetcher: typeof fetch) => ({
   model: "synthetic-test-model",
   getToken: () => "test-token-not-real",
   quotaPath,
+  oneShot: true,
   fetcher,
 });
 
@@ -79,8 +80,13 @@ test("evaluation defaults disabled before token retrieval or any fetch", async (
   assert.equal(networkGuard.mock.callCount(), 0);
 });
 
-test("runtime config is unarmed by default and rejects invalid local ports", () => {
-  assert.equal(getRuntimeConfig([]).allowEvaluation, false);
+test("runtime config enables manual actions by default, offers explicit disable and legacy one-shot", () => {
+  assert.equal(getRuntimeConfig([]).allowEvaluation, true);
+  assert.equal(getRuntimeConfig([]).oneShot, false);
+  assert.equal(getRuntimeConfig([]).model, "kimi-k3");
+  assert.equal(getRuntimeConfig([]).maxTokens, 16384);
+  assert.equal(getRuntimeConfig(["--disable-llm"]).allowEvaluation, false);
+  assert.equal(getRuntimeConfig(["--allow-one-llm-request"]).oneShot, true);
   assert.equal(getRuntimeConfig([]).host, "127.0.0.1");
   assert.equal(getRuntimeConfig(["--port=8001"]).port, 8001);
   assert.equal(
@@ -155,7 +161,7 @@ test("invalid URL, missing model, cancellation and oversized transcript reject b
   assert.equal(calls, 0);
 });
 
-test("one enabled synthetic request succeeds, sends no redirect/retry, and persists only a quota receipt", async (t) => {
+test("legacy one-shot: one enabled synthetic request succeeds, sends no redirect/retry, and persists only a quota receipt", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "qulaq-provider-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const quotaPath = join(directory, "quota.json");
@@ -227,7 +233,7 @@ test("automatic local enrichment runs once after scoring and classification fail
 });
 
 test(
-  "concurrent instances and a restarted evaluator cannot spend a second request",
+  "legacy one-shot: concurrent instances and a restarted evaluator cannot spend a second request",
   { timeout: 5000 },
   async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "qulaq-provider-test-"));
@@ -269,7 +275,7 @@ test(
   },
 );
 
-test("failed or unusable provider responses consume the allowance without a retry", async (t) => {
+test("legacy one-shot: failed or unusable provider responses consume the allowance without a retry", async (t) => {
   const failures: Array<[string, () => Promise<Response>, RegExp]> = [
     [
       "network",
@@ -323,4 +329,45 @@ test("failed or unusable provider responses consume the allowance without a retr
       );
       assert.equal(calls, 1);
     });
+});
+
+
+test("normal provider is idle at creation; repeated manual actions and restart ignore legacy quota", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "qulaq-provider-manual-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const quotaPath = join(directory, "legacy-quota.json");
+  const receipt = '{"consumedAt":"old-receipt"}';
+  await writeFile(quotaPath, receipt);
+  let calls = 0;
+  let tokenReads = 0;
+  const manualOptions = {
+    ...options(quotaPath, (async () => { calls++; return response(); }) as typeof fetch),
+    oneShot: false,
+    getToken: () => { tokenReads++; return "synthetic"; },
+  };
+  const provider = createGatewayProvider(manualOptions);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(calls, 0);
+  assert.equal(tokenReads, 0);
+  assert.equal((await provider.evaluate(input())).total, 100);
+  assert.equal((await provider.evaluate(input())).total, 100);
+  assert.equal((await createGatewayProvider(manualOptions).evaluate(input())).total, 100);
+  assert.equal(calls, 3);
+  assert.equal(tokenReads, 3);
+  assert.equal(await readFile(quotaPath, "utf8"), receipt);
+});
+
+test("normal provider has no automatic retry after failure; a new manual action may retry", async () => {
+  let calls = 0;
+  const provider = createGatewayProvider({ enabled: true, baseUrl: "https://llm.telecom.kz/v1", model: "synthetic",
+    getToken: () => "synthetic", fetcher: (async () => {
+      calls++;
+      if (calls === 1) throw new Error("Synthetic network failure");
+      return response();
+    }) as typeof fetch });
+  await assert.rejects(() => provider.evaluate(input()), /LLM_REQUEST_FAILED_NO_RETRY/);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(calls, 1);
+  assert.equal((await provider.evaluate(input())).total, 100);
+  assert.equal(calls, 2);
 });

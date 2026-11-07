@@ -14,8 +14,9 @@ export function getRuntimeConfig(args: string[] = process.argv.slice(2)) {
   return {
     host: "127.0.0.1",
     port,
-    allowEvaluation: args.includes("--allow-one-llm-request"),
-    model: value("model") ?? "",
+    allowEvaluation: !args.includes("--disable-llm"),
+    oneShot: args.includes("--allow-one-llm-request"),
+    model: value("model") ?? "kimi-k3",
     maxTokens,
     localLaya: args.includes("--local-laya"),
     layaPythonPath: resolve(repositoryRoot, ".local/laya-venv/bin/python"),

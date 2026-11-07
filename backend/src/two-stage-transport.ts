@@ -33,6 +33,8 @@ export async function readModelOutput(response: Response, signal: AbortSignal): 
     if (chunk.choices.length !== 1 || (chunk.choices[0].index ?? 0) !== 0)
       throw new Error("LLM_INVALID_STREAM");
     const choice = chunk.choices[0];
+    if (stopped && (choice.delta?.content || choice.finish_reason != null))
+      throw new Error("LLM_INVALID_STREAM");
     if (choice.finish_reason != null) {
       if (choice.finish_reason !== "stop") throw new Error("LLM_INCOMPLETE_RESPONSE");
       stopped = true;

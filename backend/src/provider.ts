@@ -13,7 +13,9 @@ export type ProviderOptions = {
   baseUrl: string;
   model: string;
   getToken: () => string | undefined;
-  quotaPath: string;
+  /** Optional legacy single-request mode; ordinary manual mode has no quota. */
+  oneShot?: boolean;
+  quotaPath?: string;
   fetcher?: typeof fetch;
   timeoutMs?: number;
   maxTokens?: number;
@@ -23,12 +25,12 @@ export type ProviderOptions = {
 type EvaluationInput = { conversation: Conversation; checklist: Checklist; signal: AbortSignal };
 type ImprovementInput = { conversation: Conversation; evaluation: Evaluation; signal: AbortSignal };
 
-/** Both explicit actions share a single durable one-request allowance. */
+/** No startup calls or retries: each explicit action issues at most one request. */
 export function createGatewayProvider(options: ProviderOptions) {
   let consumed = false;
   async function request(conversation: Conversation, messages: { role: "system" | "user"; content: string }[], signal: AbortSignal) {
     if (!options.enabled) throw new Error("EVALUATION_DISABLED");
-    if (consumed) throw new Error("ONE_TEST_ALREADY_USED");
+    if (options.oneShot && consumed) throw new Error("ONE_TEST_ALREADY_USED");
     const endpoint = new URL(
       options.baseUrl.replace(/\/$/, "") + "/chat/completions",
     );
@@ -60,23 +62,21 @@ export function createGatewayProvider(options: ProviderOptions) {
     const token = options.getToken();
     if (!token?.trim() || /[\r\n]/.test(token))
       throw new Error("LLM_TOKEN_REQUIRED");
-    consumed = true;
-    await mkdir(dirname(options.quotaPath), { recursive: true, mode: 0o700 });
-    let receipt;
-    try {
-      receipt = await open(options.quotaPath, "wx", 0o600);
-    } catch {
-      throw new Error("ONE_TEST_ALREADY_USED");
+    if (options.oneShot) {
+      if (!options.quotaPath) throw new Error("ONE_TEST_QUOTA_PATH_REQUIRED");
+      consumed = true;
+      await mkdir(dirname(options.quotaPath), { recursive: true, mode: 0o700 });
+      let receipt;
+      try {
+        receipt = await open(options.quotaPath, "wx", 0o600);
+      } catch {
+        throw new Error("ONE_TEST_ALREADY_USED");
+      }
+      try {
+        await receipt.writeFile(JSON.stringify({ consumedAt: new Date().toISOString() }));
+        await receipt.sync();
+      } finally { await receipt.close(); }
     }
-    try {
-      await receipt.writeFile(
-        JSON.stringify({ consumedAt: new Date().toISOString() }),
-      );
-      await receipt.sync();
-    } finally {
-      await receipt.close();
-    }
-
 
     // One deadline and no automatic retries, including after an ambiguous failure.
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 120_000)]);

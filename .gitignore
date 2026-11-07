@@ -22,3 +22,7 @@ build/
 .venv/
 __pycache__/
 *.pyc
+
+# Local conversation datasets
+dev.json
+DEV.json

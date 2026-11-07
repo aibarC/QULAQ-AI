@@ -97,6 +97,11 @@ test("SSE handles split UTF-8, CRLF, comments and rejects missing DONE or trunca
   await assert.rejects(() => readModelOutput(streamResponse(value, 'stop', false), signal), /LLM_INCOMPLETE_RESPONSE/);
   const malformed = new Response('data: broken\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
   await assert.rejects(() => readModelOutput(malformed, signal), /LLM_INVALID_STREAM/);
+  const afterStop = new Response([
+    { choices: [{ delta: { content: '{}' }, finish_reason: 'stop' }] },
+    { choices: [{ delta: { content: ' ' }, finish_reason: null }] },
+  ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+  await assert.rejects(() => readModelOutput(afterStop, signal), /LLM_INVALID_STREAM/);
 });
 
 test("a stalled response body obeys cancellation even if the stream ignores the signal", async () => {
@@ -109,12 +114,12 @@ test("a stalled response body obeys cancellation even if the stream ignores the 
   assert.equal(cancelled, true);
 });
 
-test("analysis and improvement share the durable allowance in both directions", async (t) => {
+test("legacy one-shot: analysis and improvement share the durable allowance in both directions", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'qulaq-two-stage-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   for (const first of ['analysis', 'improvement']) {
     let calls = 0;
-    const options = { enabled: true, baseUrl: 'https://llm.telecom.kz/v1', model: 'synthetic',
+    const options = { enabled: true, oneShot: true, baseUrl: 'https://llm.telecom.kz/v1', model: 'synthetic',
       getToken: () => 'synthetic', quotaPath: join(directory, first + '.json'),
       fetcher: (async (_url: unknown, init: RequestInit | undefined) => {
         calls++; const body = JSON.parse(String(init?.body));
@@ -137,4 +142,23 @@ test("analysis and improvement share the durable allowance in both directions", 
     await assert.rejects(() => createGatewayProvider(options).improve(improvement), /ONE_TEST_ALREADY_USED/);
     assert.equal(calls, 1);
   }
+});
+
+
+test("normal manual mode supports analysis then explicitly requested improvement without automatic second call", async () => {
+  let calls = 0;
+  const provider = createGatewayProvider({ enabled: true, baseUrl: 'https://llm.telecom.kz/v1', model: 'synthetic',
+    getToken: () => 'synthetic', fetcher: (async () => {
+      calls++;
+      return streamResponse(calls === 1 ? raw : { conversation_improvement: 'Синтетический пример.' });
+    }) as typeof fetch });
+  assert.equal(calls, 0);
+  const analysis = await provider.evaluate({ conversation, checklist, signal: new AbortController().signal });
+  assert.equal(analysis.total, 100);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(calls, 1);
+  const input = { conversation, evaluation: evaluation(), signal: new AbortController().signal };
+  assert.equal(await provider.improve(input), 'Синтетический пример.');
+  assert.equal(await provider.improve(input), 'Синтетический пример.');
+  assert.equal(calls, 3);
 });
