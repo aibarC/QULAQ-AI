@@ -117,9 +117,11 @@ test("classification failures retain quality results while removing old categori
   assert.equal(outcome.contactReason, previous);
 });
 
-test("local classification is opt-in and never enables a gateway allowance", () => {
+test("local classification is opt-in and independent of manual gateway permissions", () => {
   assert.equal(getRuntimeConfig([]).localLaya, false);
   assert.equal(getRuntimeConfig(["--local-laya"]).localLaya, true);
-  assert.equal(getRuntimeConfig(["--local-laya"]).allowEvaluation, false);
+  assert.equal(getRuntimeConfig(["--local-laya"]).allowEvaluation, getRuntimeConfig([]).allowEvaluation);
+  assert.equal(getRuntimeConfig(["--local-laya", "--disable-llm"]).allowEvaluation, false);
+  assert.equal(getRuntimeConfig(["--local-laya"]).oneShot, false);
   assert.throws(() => createLayaClassifier({ pythonPath: "python", workerPath: "/tmp/classify.py" }));
 });
