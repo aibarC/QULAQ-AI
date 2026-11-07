@@ -8,6 +8,8 @@ export default defineConfig(({ mode }) => {
   if (target && !/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(target))
     throw new Error("QULAQ_API_TARGET must be a local backend origin");
   return {
+    // Keep the static bundle relocatable for a future HTML web-resource host.
+    base: "./",
     esbuild: { jsx: "automatic" },
     server: {
       port: 5173,

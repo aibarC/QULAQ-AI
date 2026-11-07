@@ -18,6 +18,7 @@ import type {
   Message,
   Status,
 } from "../lib/types";
+import "./transcript-motion.css";
 
 export function Spinner() {
   return <LoaderCircle size={17} className="spin" aria-hidden="true" />;
@@ -240,26 +241,33 @@ export function Transcript({
   const [audioError, setAudioError] = useState(false);
   const refs = useRef<Record<string, HTMLDivElement | null>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hasEvidence = conversation.messages.some((message) =>
+    highlighted.includes(message.id),
+  );
   useEffect(() => {
-    const first = highlighted[0];
-    const target = refs.current[first];
+    const first = conversation.messages.find((message) =>
+      highlighted.includes(message.id),
+    );
+    const target = first ? refs.current[first.id] : null;
     const container = scrollRef.current;
     if (target && container) {
-      const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "instant"
-        : "smooth";
+      const behavior =
+        document.documentElement.dataset.motion === "full" &&
+        !matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "smooth"
+          : "instant";
       container.scrollTo({
         top:
           container.scrollTop +
           target.getBoundingClientRect().top -
           container.getBoundingClientRect().top -
-          (container.clientHeight - target.clientHeight) / 2,
+          Math.max(16, (container.clientHeight - target.clientHeight) / 2),
         behavior,
       });
       if (window.innerWidth < 980)
         container.parentElement?.scrollIntoView({ behavior, block: "start" });
     }
-  }, [highlighted]);
+  }, [highlighted, conversation.id]);
   useEffect(() => {
     setAudioError(false);
     setQuery("");
@@ -349,8 +357,8 @@ export function Transcript({
           </>
         )}
       </div>
-      {highlighted.length > 0 && (
-        <div className="evidence-notice">
+      {hasEvidence && (
+        <div className="evidence-notice" role="status">
           Выделено доказательство
           <button className="button ghost small" onClick={onClear}>
             Снять выделение
@@ -362,7 +370,10 @@ export function Transcript({
           Совпадений нет. Все реплики остаются доступными.
         </p>
       )}
-      <div className="messages" ref={scrollRef}>
+      <div
+        className={`messages ${hasEvidence ? "has-evidence-focus" : ""}`}
+        ref={scrollRef}
+      >
         {conversation.messages.map((m) => (
           <div
             key={m.id}

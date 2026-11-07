@@ -1,3 +1,6 @@
+import MotionSettings from "./components/MotionSettings";
+import SplitWorkspace from "./components/SplitWorkspace";
+import ListeningStage from "./components/ListeningStage";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -40,6 +43,8 @@ import type {
 } from "./lib/types";
 import ChecklistEditor from "./components/ChecklistEditor";
 import EvaluationPanel from "./components/EvaluationPanel";
+import CommandMenu, { type CommandItem } from "./components/CommandMenu";
+import SignalOverview from "./components/SignalOverview";
 import {
   AnswerSelect,
   answerLabel,
@@ -110,6 +115,19 @@ export default function App() {
   const busyRef = useRef(false);
   const [toast, setToast] = useState("");
   const [help, setHelp] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [navigation, setNavigation] = useState<"top" | "side">(() => {
+    try {
+      return sessionStorage.getItem("qulaq-navigation") === "side"
+        ? "side"
+        : "top";
+    } catch {
+      return "top";
+    }
+  });
+  const [density, setDensity] = useState<"comfortable" | "compact">(
+    "comfortable",
+  );
   const [mobileMenu, setMobileMenu] = useState(false);
   const [groupId, setGroupId] = useState("DEV");
   const [importError, setImportError] = useState("");
@@ -138,6 +156,17 @@ export default function App() {
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
   const lastHash = useRef(location.hash);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (!document.querySelector("dialog[open]") && !mobileMenu)
+          setCommandOpen(true);
+      }
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [mobileMenu]);
   useEffect(() => {
     const media = matchMedia("(max-width: 720px)");
     const update = () => setIsMobile(media.matches);
@@ -232,6 +261,22 @@ export default function App() {
   useEffect(() => {
     setPage(1);
   }, [query, language, channel, status]);
+  useEffect(() => {
+    if (
+      matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      document.documentElement.dataset.motion === "off"
+    )
+      return;
+    const element = document.getElementById("main-content");
+    const animation = element?.animate(
+      [
+        { opacity: 0.7, transform: "translateY(7px)" },
+        { opacity: 1, transform: "translateY(0)" },
+      ],
+      { duration: 220, easing: "cubic-bezier(.2,.8,.2,1)" },
+    );
+    return () => animation?.cancel();
+  }, [route.page, route.id]);
   function go(next: Route, force = false) {
     if (
       dirty &&
@@ -400,8 +445,57 @@ export default function App() {
   }
   const allowed =
     role === "user" || route.page === "appeals" || route.page === "appeal";
+  const commands: CommandItem[] = [
+    ...(role === "user"
+      ? [
+          {
+            id: "nav-dialogs",
+            title: "Диалоги",
+            detail: "Все разговоры и фильтры",
+            group: "Раздел",
+            run: () => go({ page: "dialogs" }),
+          },
+          {
+            id: "nav-checklists",
+            title: "Чек-листы",
+            detail: "Критерии, веса и версии правил",
+            group: "Раздел",
+            run: () => go({ page: "checklists" }),
+          },
+        ]
+      : []),
+    {
+      id: "nav-appeals",
+      title: role === "reviewer" ? "Апелляции" : "Мои апелляции",
+      detail: `${pending} ожидают решения`,
+      group: "Раздел",
+      run: () => go({ page: "appeals" }),
+    },
+    ...(role === "user"
+      ? workspace.conversations.map((c) => ({
+          id: c.id,
+          title: c.externalId,
+          detail:
+            c.messages.find((m) => m.speaker === "client")?.text ||
+            "Открыть транскрипт",
+          search: `${c.language} ${c.messages.map((m) => m.text).join(" ")}`,
+          group: c.demo ? "Учебный пример" : `Диалог / ${c.language}`,
+          run: () => go({ page: "dialog", id: c.id }),
+        }))
+      : workspace.appeals.map((a) => ({
+          id: a.id,
+          title: `Апелляция ${a.id.slice(-6)}`,
+          detail: a.comment,
+          group: a.status === "pending" ? "Ожидает решения" : "Рассмотрена",
+          run: () => go({ page: "appeal", id: a.id }),
+        }))),
+  ];
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-density={density}
+      data-navigation={navigation}
+    >
       <a
         className="skip-link"
         href="#main-content"
@@ -514,27 +608,56 @@ export default function App() {
             <ChevronRight size={13} />
             <strong>{title}</strong>
           </div>
-          <div
-            className="role-control"
-            role="group"
-            aria-label="Роль в приложении"
-          >
+          <div className="topbar-actions">
             <button
-              className={role === "user" ? "selected" : ""}
-              onClick={() => switchRole("user")}
-              aria-pressed={role === "user"}
+              className="navigation-layout button small secondary"
+              aria-label={
+                navigation === "top" ? "Навигация сбоку" : "Навигация сверху"
+              }
+              onClick={() => {
+                const next = navigation === "top" ? "side" : "top";
+                setNavigation(next);
+                try {
+                  sessionStorage.setItem("qulaq-navigation", next);
+                } catch {
+                  /* Layout still works without storage. */
+                }
+              }}
             >
-              <MessageSquare size={15} />
-              <span>Пользователь</span>
+              {navigation === "top" ? "Меню сбоку" : "Меню сверху"}
             </button>
             <button
-              className={role === "reviewer" ? "selected" : ""}
-              onClick={() => switchRole("reviewer")}
-              aria-pressed={role === "reviewer"}
+              className="command-trigger"
+              type="button"
+              onClick={() => setCommandOpen(true)}
+              aria-label="Быстрый поиск"
             >
-              <ShieldCheck size={15} />
-              <span>Проверяющий</span>
+              <Search size={16} aria-hidden="true" />
+              <span>Быстрый поиск</span>
+              <kbd>⌘ / Ctrl K</kbd>
             </button>
+            <div
+              className="role-control"
+              role="group"
+              aria-label="Роль в приложении"
+            >
+              <button
+                className={role === "user" ? "selected" : ""}
+                onClick={() => switchRole("user")}
+                aria-pressed={role === "user"}
+              >
+                <MessageSquare size={15} />
+                <span>Пользователь</span>
+              </button>
+              <button
+                className={role === "reviewer" ? "selected" : ""}
+                onClick={() => switchRole("reviewer")}
+                aria-pressed={role === "reviewer"}
+              >
+                <ShieldCheck size={15} />
+                <span>Проверяющий</span>
+              </button>
+            </div>
           </div>
         </header>
         <main
@@ -609,6 +732,31 @@ export default function App() {
                       <ArrowUpRight size={15} />
                     </button>
                   </div>
+                  {real.length > 0 && (
+                    <SignalOverview
+                      conversations={real}
+                      selected={status}
+                      onFilter={(next) => {
+                        setStatus(next);
+                        setQuery("");
+                        setLanguage("all");
+                        setChannel("all");
+                        setPage(1);
+                        requestAnimationFrame(() => {
+                          document
+                            .querySelector(".dialog-table")
+                            ?.scrollIntoView({
+                              block: "start",
+                              behavior: matchMedia(
+                                "(prefers-reduced-motion: reduce)",
+                              ).matches
+                                ? "auto"
+                                : "smooth",
+                            });
+                        });
+                      }}
+                    />
+                  )}
                   <div className="dataset-bar panel">
                     <div className="dataset-label">
                       <span className="dataset-icon">
@@ -618,7 +766,9 @@ export default function App() {
                         <strong>Набор разговоров</strong>
                         <span>
                           {adapter.mode === "local"
-                            ? "Локальный набор для разработки"
+                            ? real.length
+                              ? "Локальный набор для разработки"
+                              : "Набор ещё не загружен"
                             : "Готовые транскрипты и ссылки на записи"}
                         </span>
                       </div>
@@ -706,6 +856,28 @@ export default function App() {
                                 <X size={15} />
                               </button>
                             )}
+                          </div>
+                          <div
+                            className="density-control"
+                            role="group"
+                            aria-label="Плотность списка"
+                          >
+                            <button
+                              type="button"
+                              aria-label="Просторный список"
+                              aria-pressed={density === "comfortable"}
+                              onClick={() => setDensity("comfortable")}
+                            >
+                              <LayoutList size={17} />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Компактный список"
+                              aria-pressed={density === "compact"}
+                              onClick={() => setDensity("compact")}
+                            >
+                              <Menu size={17} />
+                            </button>
                           </div>
                           <div className="table-filters">
                             <SlidersHorizontal size={17} />
@@ -900,72 +1072,10 @@ export default function App() {
                       </section>
                     </>
                   ) : (
-                    <div className="welcome-panel panel">
-                      <div className="welcome-copy">
-                        <span className="welcome-symbol">
-                          <MessageSquare size={30} />
-                          <span>
-                            <Check size={15} />
-                          </span>
-                        </span>
-                        <h2>
-                          Услышать больше.
-                          <br />
-                          Понять каждый диалог.
-                        </h2>
-                        <p>
-                          Загрузите набор, чтобы изучить разговоры, оценить
-                          качество и разобраться в спорных моментах.
-                        </p>
-                        <div className="welcome-steps">
-                          <span>
-                            <b>1</b>Загрузите разговоры
-                          </span>
-                          <span>
-                            <b>2</b>Выберите чек-лист
-                          </span>
-                          <span>
-                            <b>3</b>Изучите результат
-                          </span>
-                        </div>
-                      </div>
-                      <div
-                        className="conversation-illustration"
-                        aria-hidden="true"
-                      >
-                        <div className="illustration-heading">
-                          <span />
-                          <i />
-                          <i />
-                        </div>
-                        <div className="illustration-line">
-                          <b />
-                          <span />
-                        </div>
-                        <div className="illustration-bubble">
-                          <i />
-                          <i />
-                          <i />
-                        </div>
-                        <div className="illustration-line second">
-                          <b />
-                          <span />
-                        </div>
-                        <div className="illustration-bubble reply">
-                          <i />
-                          <i />
-                        </div>
-                        <div className="illustration-check">
-                          <CheckCheck size={22} />
-                          <span>
-                            У каждого вывода
-                            <br />
-                            <strong>есть доказательство</strong>
-                          </span>
-                        </div>
-                      </div>
-                      <span className="empty-label">Набор ещё не загружен</span>
-                    </div>
+                    <ListeningStage
+                      disabled={!demo}
+                      onDemo={() => demo && go({ page: "dialog", id: demo.id })}
+                    />
                   )}
                   <button
                     className="demo-entry"
@@ -1042,7 +1152,7 @@ export default function App() {
                         </span>
                       </div>
                     )}
-                    <div className="dialog-workspace">
+                    <SplitWorkspace revealEvidence={highlighted}>
                       <Transcript
                         conversation={conversation}
                         highlighted={highlighted}
@@ -1098,7 +1208,7 @@ export default function App() {
                             setEvalError(errorMessage(e));
                           }
                         }}
-                        onEvidence={setHighlighted}
+                        onEvidence={(ids) => setHighlighted([...ids])}
                         onAppeal={(evaluation, criterion) => {
                           setAppealDraft({ evaluation, criterion });
                           setComment("");
@@ -1106,7 +1216,7 @@ export default function App() {
                         }}
                         onOpenAppeal={openAppeal}
                       />
-                    </div>
+                    </SplitWorkspace>
                   </>
                 ) : (
                   <NotFound go={() => go({ page: "dialogs" })} />
@@ -1326,6 +1436,7 @@ export default function App() {
                 ? "Локальная версия"
                 : "Подключено к API"}
             </span>
+            <MotionSettings />
           </footer>
         </main>
       </div>
@@ -1418,6 +1529,9 @@ export default function App() {
             </div>
           </form>
         </Modal>
+      )}
+      {commandOpen && (
+        <CommandMenu items={commands} onClose={() => setCommandOpen(false)} />
       )}
       {help && (
         <Modal title="Как работает QULAQ" onClose={() => setHelp(false)}>

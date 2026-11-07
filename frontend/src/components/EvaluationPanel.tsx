@@ -28,6 +28,51 @@ import {
   scoreLabel,
   Spinner,
 } from "./Shared";
+import "./evaluation-motion.css";
+
+function ScoreRing({ total }: { total: number | null }) {
+  const amount = total === null ? null : Math.min(100, Math.max(0, total));
+  return (
+    <div
+      className={`quality-ring ${amount === null ? "is-unavailable" : ""}`}
+      role="img"
+      aria-label={
+        amount === null
+          ? "Итог ещё не рассчитан"
+          : `Оценка ${scoreLabel(total)} из 100`
+      }
+    >
+      <svg
+        className="quality-ring-svg"
+        viewBox="0 0 112 112"
+        aria-hidden="true"
+      >
+        <circle className="quality-ring-track" cx="56" cy="56" r="47" />
+        {amount !== null && (
+          <circle
+            className="quality-ring-value"
+            cx="56"
+            cy="56"
+            r="47"
+            pathLength="100"
+            strokeDasharray={`${amount} 100`}
+            opacity={amount === 0 ? 0 : 1}
+            transform="rotate(-90 56 56)"
+          />
+        )}
+        <circle className="quality-ring-inner" cx="56" cy="56" r="36" />
+      </svg>
+      <span className="quality-ring-center" aria-hidden="true">
+        {amount === null ? (
+          <CircleDashed size={27} />
+        ) : (
+          <ShieldCheck size={28} />
+        )}
+        <span>{amount === null ? "Нет итога" : "из 100"}</span>
+      </span>
+    </div>
+  );
+}
 
 interface Props {
   conversation: Conversation;
@@ -101,6 +146,25 @@ export default function EvaluationPanel(p: Props) {
       (isIssue(a) ? 0 : a.override ? 1 : a.answer === null ? 2 : 3) -
       (isIssue(b) ? 0 : b.override ? 1 : b.answer === null ? 2 : 3),
   );
+  // Counts describe the returned criterion results, never recalculate a score.
+  const distribution = { passed: 0, issues: 0, na: 0, unscored: 0 };
+  evaluation?.results.forEach((result) => {
+    const criterion = evaluation.checklist.criteria.find(
+      (c) => c.id === result.criterionId,
+    );
+    if (!criterion) return;
+    if (result.answer === null) distribution.na++;
+    else if (isIssue(result)) distribution.issues++;
+    else if (criterion.type === "scale" && result.points === null)
+      distribution.unscored++;
+    else distribution.passed++;
+  });
+  const distributionItems = [
+    { key: "passed", label: "Без замечаний", count: distribution.passed },
+    { key: "issues", label: "Требуют внимания", count: distribution.issues },
+    { key: "na", label: "N/A", count: distribution.na },
+    { key: "unscored", label: "Без расчёта", count: distribution.unscored },
+  ].filter((item) => item.count > 0);
   return (
     <section className="evaluation-panel" aria-label="Оценка диалога">
       <div className="panel evaluate-control">
@@ -161,9 +225,23 @@ export default function EvaluationPanel(p: Props) {
         )}
       </div>
       {p.evaluating && (
-        <div className="evaluation-loading panel" role="status">
-          <div className="analysis-orbit">
-            <Sparkles size={25} />
+        <div className="evaluation-loading panel quality-loading" role="status">
+          <div className="quality-activity" aria-hidden="true">
+            <div className="quality-activity-orbit">
+              <span />
+              <span />
+            </div>
+            <div className="quality-activity-document">
+              <ListChecks size={25} />
+              <div className="quality-activity-lines">
+                <i />
+                <i />
+                <i />
+              </div>
+            </div>
+            <span className="quality-activity-spark">
+              <Sparkles size={16} />
+            </span>
           </div>
           <h3>
             {p.conversation.demo
@@ -175,8 +253,17 @@ export default function EvaluationPanel(p: Props) {
               ? "Это демонстрация интерфейса. ИИ не запускается."
               : "Транскрипт доступен, пока сервер обрабатывает запрос."}
           </p>
-          <div className="indeterminate">
-            <span />
+          <div className="quality-waiting-label">
+            <span className="quality-activity-wave" aria-hidden="true">
+              {Array.from({ length: 7 }, (_, index) => (
+                <i key={index} style={{ animationDelay: `${index * 90}ms` }} />
+              ))}
+            </span>
+            <span>
+              {p.conversation.demo
+                ? "Подготавливаем пример"
+                : "Ожидаем ответ сервера"}
+            </span>
           </div>
           {!p.conversation.demo && (
             <button className="button secondary small" onClick={p.onRefresh}>
@@ -234,7 +321,10 @@ export default function EvaluationPanel(p: Props) {
               </select>
             </label>
           )}
-          <div className="score-card">
+          <div
+            className="score-card quality-score-card"
+            key={p.conversation.id}
+          >
             <div>
               <span className="score-caption">Общий результат</span>
               <div className="score-number">
@@ -256,12 +346,7 @@ export default function EvaluationPanel(p: Props) {
                       : "Нужно внимание к качеству"}
               </p>
             </div>
-            <div className="score-seal">
-              <ShieldCheck size={31} />
-              <span>
-                {evaluation.total === null ? "—" : Math.round(evaluation.total)}
-              </span>
-            </div>
+            <ScoreRing total={evaluation.total} />
             <div className="score-footer">
               <span>
                 <ListChecks size={14} />
@@ -269,6 +354,34 @@ export default function EvaluationPanel(p: Props) {
               </span>
               <span>Версия {evaluation.checklist.version}</span>
             </div>
+          </div>
+          <div
+            className="criteria-distribution"
+            aria-label="Распределение результатов критериев"
+          >
+            <div className="criteria-distribution-bar" aria-hidden="true">
+              {distributionItems.map((item) => (
+                <span
+                  key={item.key}
+                  className={`distribution-${item.key}`}
+                  style={{ flexGrow: item.count }}
+                />
+              ))}
+            </div>
+            <dl>
+              {distributionItems.map((item) => (
+                <div
+                  key={item.key}
+                  className={`distribution-item distribution-${item.key}`}
+                >
+                  <dt>
+                    <i aria-hidden="true" />
+                    {item.label}
+                  </dt>
+                  <dd>{item.count}</dd>
+                </div>
+              ))}
+            </dl>
           </div>
           {evaluation.grossViolation && (
             <div className="violation">
@@ -326,12 +439,13 @@ export default function EvaluationPanel(p: Props) {
                         r.points < c.weight));
               return (
                 <article
-                  className={`criterion-result ${issue ? "has-issue" : ""}`}
+                  className={`criterion-result ${issue ? "has-issue" : ""} ${isClosed ? "is-collapsed" : "is-expanded"}`}
                   key={c.id}
                 >
                   <button
                     className="criterion-result-toggle"
                     aria-expanded={!isClosed}
+                    aria-controls={`criterion-detail-${evaluation.id}-${c.id}`}
                     onClick={() =>
                       setCollapsed((x) =>
                         isClosed ? x.filter((id) => id !== c.id) : [...x, c.id],
@@ -366,7 +480,10 @@ export default function EvaluationPanel(p: Props) {
                     />
                   </button>
                   {!isClosed && (
-                    <div className="criterion-result-body">
+                    <div
+                      className="criterion-result-body"
+                      id={`criterion-detail-${evaluation.id}-${c.id}`}
+                    >
                       <p>{r.explanation}</p>
                       {r.answer === null && r.naReason && (
                         <div className="na-reason">{r.naReason}</div>
