@@ -594,9 +594,43 @@ test("coaching shows a suggested reply separately from source evidence", async (
   expect(posts).toBe(0);
 });
 
-test("checklist editor saves additions and deletions for the next analysis", async ({ page }, testInfo) => {
+test("checklist editor applies saved additions, deletions and weights while preserving result snapshots", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "enabled-fixture", "Synthetic evaluator only");
   await page.goto("/");
+  const workspace = async () => (await (await page.request.get("/api/workspace")).json());
+  const initial = await workspace();
+  const checklist = initial.checklists[0];
+  const recordId = initial.conversations[0].id;
+  const dialogUrl = `/#/dialog/${encodeURIComponent(recordId)}`;
+  const expectedTotal = (rules: typeof checklist.criteria) => {
+    const weighted = rules.filter((rule: { type: string }) => rule.type !== "flag");
+    const weight = weighted.reduce((sum: number, rule: { weight: number }) => sum + rule.weight, 0);
+    const lost = weighted.filter((rule: { id: string }) => rule.id === "c5")
+      .reduce((sum: number, rule: { weight: number }) => sum + rule.weight, 0);
+    return Math.round(10000 * (weight - lost) / weight) / 100;
+  };
+  const run = async (rules: typeof checklist) => {
+    await page.goto(dialogUrl);
+    await page.locator("#evaluation-checklist").selectOption(checklist.id);
+    const before = await workspace();
+    const previousIds = new Set(before.evaluations.map((item: { id: string }) => item.id));
+    await page.getByRole("button", { name: /^(Оценить|Оценить заново)$/ }).click();
+    await expect(page.getByRole("button", { name: "Оцениваем…", exact: true })).toHaveCount(0);
+    await expect.poll(async () => (await workspace()).evaluations.filter(
+      (item: { id: string; recordId: string }) => item.recordId === recordId && !previousIds.has(item.id),
+    ).length).toBe(1);
+    const result = (await workspace()).evaluations.find(
+      (item: { id: string; recordId: string }) => item.recordId === recordId && !previousIds.has(item.id),
+    );
+    expect(result.checklist).toEqual(rules);
+    expect(result.results.map((item: { criterionId: string }) => item.criterionId).sort())
+      .toEqual(rules.criteria.map((item: { id: string }) => item.id).sort());
+    expect(result.total).toBe(expectedTotal(rules.criteria));
+    await expect(page.locator(".criterion-result")).toHaveCount(rules.criteria.length);
+    await expect(page.locator(".score-number")).toContainText(result.total.toFixed(2).replace(".", ","));
+    return result;
+  };
+  const original = await run(checklist);
   await page.getByRole("button", { name: "Чек-листы", exact: true }).click();
   await page.getByRole("button", { name: "Добавить критерий", exact: true }).click();
   await page.getByLabel("Название критерия", { exact: true }).fill("Проверка понимания — тест");
@@ -605,21 +639,39 @@ test("checklist editor saves additions and deletions for the next analysis", asy
   const save = page.getByRole("button", { name: "Сохранить чек-лист", exact: true });
   await save.click();
   await expect(save).toBeDisabled();
-  const state = await (await page.request.get("/api/workspace")).json();
-  const added = state.checklists[0];
-  const criterion = added.criteria.find((r: {name: string}) => r.name === "Проверка понимания — тест");
+  const added = (await workspace()).checklists.find((item: { id: string }) => item.id === checklist.id);
+  expect(added.version).toBe(checklist.version + 1);
+  const criterion = added.criteria.find((r: { name: string }) => r.name === "Проверка понимания — тест");
   expect(criterion.weight).toBe(25);
-  await page.reload();
+  await page.goto(dialogUrl);
+  await expect(page.locator(".checklist-next-run")).toContainText(`v${added.version}`);
+  await expect(page.locator(".checklist-next-run li").filter({ hasText: criterion.name })).toContainText("Вес 25");
+  const withAdded = await run(added);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toContainText("Вес 25");
+
+  await page.getByRole("button", { name: "Чек-листы", exact: true }).click();
   await page.getByRole("button", { name: /Проверка понимания — тест/ }).click();
   await page.getByRole("button", { name: "Удалить критерий", exact: true }).click();
   await page.getByRole("button", { name: "Удалить критерий", exact: true }).click();
   await save.click();
   await expect(save).toBeDisabled();
-  const final = await (await page.request.get("/api/workspace")).json();
-  expect(final.checklists[0].version).toBe(added.version + 1);
-  expect(final.checklists[0].criteria.some((r: {id: string}) => r.id === criterion.id)).toBe(false);
+  const removed = (await workspace()).checklists.find((item: { id: string }) => item.id === checklist.id);
+  expect(removed.version).toBe(added.version + 1);
+  expect(removed.criteria).toEqual(checklist.criteria);
+  await page.goto(dialogUrl);
+  await expect(page.locator(".checklist-next-run li").filter({ hasText: criterion.name })).toHaveCount(0);
+  await run(removed);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toHaveCount(0);
+
+  // History must render its saved rubric, not the current editor configuration.
+  await page.goto(`${dialogUrl}?evaluation=${encodeURIComponent(withAdded.id)}`);
+  await expect(page.locator(".criterion-result")).toHaveCount(added.criteria.length);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toContainText("Вес 25");
   await page.reload();
-  await expect(page.getByRole("button", { name: /Проверка понимания — тест/ })).toHaveCount(0);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toContainText("Вес 25");
+  const final = await workspace();
+  expect(final.evaluations.find((item: { id: string }) => item.id === original.id)).toEqual(original);
+  expect(final.evaluations.find((item: { id: string }) => item.id === withAdded.id)).toEqual(withAdded);
 });
 
 test("API link import preserves history, shows transcript and audio, and never starts analysis", async ({ page }, testInfo) => {
