@@ -37,8 +37,8 @@
     "conversation_improvement.system.txt": "bd93d45906f7ebd8be1796ec33a1ca0971f909f11d6845efb15807a6e2f09028"
   },
   "validation_scope": {
-    "analysis": "Final full65_c6c7_two_stage_v1: 65/65 valid, 479/520 exact reference agreement; six targeted C6 reasons fixed with values retained; target C7 fixed and four controls retained. Not full semantic audit.",
-    "conversation_improvement": "Four additive-generation examples: two usable; one redundant clarification; one omitted farewell. Original analysis preserved by code, not regenerated."
+    "analysis": "Final final65_c6c7_two_stage_v1 run: 92.12% criterion-value agreement with the working AI-assisted DEV annotations. This is not an independent test or a full semantic audit of explanations.",
+    "conversation_improvement": "Limited development checks found redundant clarification and omitted farewell in some suggestions. Original analysis is preserved by code, not regenerated; overall recommendation quality is not established."
   },
   "deployment_status": "Integrated in website/backend; final DEV65 run completed. Optional improvement remains a separate user-triggered call."
 }
