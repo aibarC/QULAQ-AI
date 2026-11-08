@@ -1,6 +1,6 @@
+import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import { defaultChecklist } from "../src/lib/fixtures";
-import ExcelJS from "exceljs";
 
 const reference = {
   "ru-2": {
@@ -132,24 +132,15 @@ test("local row opens the supplied Excel preview read-only and exports its sourc
     0,
   );
   const downloadEvent = page.waitForEvent("download");
-  await page
-    .getByRole("button", { name: "Скачать результат XLSX", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Скачать JSON этого диалога", exact: true }).click();
   const download = await downloadEvent;
-  expect(download.suggestedFilename()).toMatch(/\.xlsx$/);
-  const book = new ExcelJS.Workbook();
-  await book.xlsx.readFile((await download.path())!);
-  expect(String(book.getWorksheet("Результат")!.getCell("B3").value)).toContain(
-    "Excel",
-  );
-  expect(String(book.getWorksheet("Результат")!.getCell("B3").value)).toContain(
-    "backend не запускался",
-  );
-  expect(book.getWorksheet("Результат")!.getCell("B9").value).toBe(85.38);
-  expect(book.getWorksheet("Баллы по критериям")!.rowCount).toBe(9);
-  expect(book.getWorksheet("Баллы по критериям")!.getCell("C3").value).toBe(
-    "N/A",
-  );
+  expect(download.suggestedFilename()).toMatch(/\.json$/);
+  const exported = JSON.parse(await readFile((await download.path())!, "utf8"));
+  expect(exported.source_kind).toBe("preview");
+  expect(exported.source_description).toContain("Excel");
+  expect(exported.total).toBe(85.38);
+  expect(exported.results).toHaveLength(8);
+  expect(exported.results.some((r: { value: unknown }) => r.value === null)).toBe(true);
   expect(apiCalls).toEqual([]);
   await page.getByRole("button", { name: "К диалогам", exact: true }).click();
   await expect(page.locator(".conversation-row")).toHaveCount(7);

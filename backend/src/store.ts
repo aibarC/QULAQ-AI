@@ -1,3 +1,4 @@
+import { migrateLegacyChecklist } from "./checklist-migrations.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, lstat, unlink } from "node:fs/promises";
 import { dirname, basename, resolve } from "node:path";
@@ -29,6 +30,7 @@ export async function createStore(
       throw new Error("Invalid workspace storage file.");
     }
     state = parseWorkspace(JSON.parse(await readFile(file, "utf8")));
+    needsWrite = migrateLegacyChecklist(state);
     // A previous process cannot finish these tasks. Never retry a model call on restart.
     for (const record of state.conversations) {
       if (record.status === "evaluating") {

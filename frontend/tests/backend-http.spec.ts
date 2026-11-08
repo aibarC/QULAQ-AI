@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import ExcelJS from "exceljs";
 
 // Real localhost HTTP/store/scorer integration, with a synthetic injected
 // evaluator. These tests provide no evidence about a live LLM or gateway.
@@ -120,20 +119,9 @@ test("real local HTTP persists upload, analysis, separate improvement, export an
   await expect(page.locator(".message.highlighted")).toContainText(
     "Синтетический ответ HTTP.",
   );
-  const downloadEvent = page.waitForEvent("download");
-  await page
-    .getByRole("button", { name: "Скачать результат XLSX", exact: true })
-    .click();
-  const download = await downloadEvent;
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile((await download.path())!);
-  expect(workbook.getWorksheet("Результат")!.getCell("B9").value).toBe(85);
-  expect(workbook.getWorksheet("Результат")!.getCell("B3").value).toBe(
-    "Результат сервера",
-  );
-  expect(workbook.getWorksheet("Транскрипт")!.rowCount).toBe(3);
+  await expect(page.getByRole("button", { name: /XLSX/ })).toHaveCount(0);
   const jsonDownloadEvent = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать результат JSON", exact: true }).click();
+  await page.getByRole("button", { name: "Скачать JSON этого диалога", exact: true }).click();
   const jsonDownload = await jsonDownloadEvent;
   expect(jsonDownload.suggestedFilename()).toMatch(/\.json$/);
   const jsonResult = JSON.parse(await readFile((await jsonDownload.path())!, "utf8"));
@@ -594,9 +582,43 @@ test("coaching shows a suggested reply separately from source evidence", async (
   expect(posts).toBe(0);
 });
 
-test("checklist editor saves additions and deletions for the next analysis", async ({ page }, testInfo) => {
+test("checklist editor applies saved additions, deletions and weights while preserving result snapshots", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "enabled-fixture", "Synthetic evaluator only");
   await page.goto("/");
+  const workspace = async () => (await (await page.request.get("/api/workspace")).json());
+  const initial = await workspace();
+  const checklist = initial.checklists[0];
+  const recordId = initial.conversations[0].id;
+  const dialogUrl = `/#/dialog/${encodeURIComponent(recordId)}`;
+  const expectedTotal = (rules: typeof checklist.criteria) => {
+    const weighted = rules.filter((rule: { type: string }) => rule.type !== "flag");
+    const weight = weighted.reduce((sum: number, rule: { weight: number }) => sum + rule.weight, 0);
+    const lost = weighted.filter((rule: { id: string }) => rule.id === "c5")
+      .reduce((sum: number, rule: { weight: number }) => sum + rule.weight, 0);
+    return Math.round(10000 * (weight - lost) / weight) / 100;
+  };
+  const run = async (rules: typeof checklist) => {
+    await page.goto(dialogUrl);
+    await page.locator("#evaluation-checklist").selectOption(checklist.id);
+    const before = await workspace();
+    const previousIds = new Set(before.evaluations.map((item: { id: string }) => item.id));
+    await page.getByRole("button", { name: /^(Оценить|Оценить заново)$/ }).click();
+    await expect(page.getByRole("button", { name: "Оцениваем…", exact: true })).toHaveCount(0);
+    await expect.poll(async () => (await workspace()).evaluations.filter(
+      (item: { id: string; recordId: string }) => item.recordId === recordId && !previousIds.has(item.id),
+    ).length).toBe(1);
+    const result = (await workspace()).evaluations.find(
+      (item: { id: string; recordId: string }) => item.recordId === recordId && !previousIds.has(item.id),
+    );
+    expect(result.checklist).toEqual(rules);
+    expect(result.results.map((item: { criterionId: string }) => item.criterionId).sort())
+      .toEqual(rules.criteria.map((item: { id: string }) => item.id).sort());
+    expect(result.total).toBe(expectedTotal(rules.criteria));
+    await expect(page.locator(".criterion-result")).toHaveCount(rules.criteria.length);
+    await expect(page.locator(".score-number")).toContainText(result.total.toFixed(2).replace(".", ","));
+    return result;
+  };
+  const original = await run(checklist);
   await page.getByRole("button", { name: "Чек-листы", exact: true }).click();
   await page.getByRole("button", { name: "Добавить критерий", exact: true }).click();
   await page.getByLabel("Название критерия", { exact: true }).fill("Проверка понимания — тест");
@@ -605,21 +627,39 @@ test("checklist editor saves additions and deletions for the next analysis", asy
   const save = page.getByRole("button", { name: "Сохранить чек-лист", exact: true });
   await save.click();
   await expect(save).toBeDisabled();
-  const state = await (await page.request.get("/api/workspace")).json();
-  const added = state.checklists[0];
-  const criterion = added.criteria.find((r: {name: string}) => r.name === "Проверка понимания — тест");
+  const added = (await workspace()).checklists.find((item: { id: string }) => item.id === checklist.id);
+  expect(added.version).toBe(checklist.version + 1);
+  const criterion = added.criteria.find((r: { name: string }) => r.name === "Проверка понимания — тест");
   expect(criterion.weight).toBe(25);
-  await page.reload();
+  await page.goto(dialogUrl);
+  await expect(page.locator(".checklist-next-run")).toContainText(`v${added.version}`);
+  await expect(page.locator(".checklist-next-run li").filter({ hasText: criterion.name })).toContainText("Вес 25");
+  const withAdded = await run(added);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toContainText("Вес 25");
+
+  await page.getByRole("button", { name: "Чек-листы", exact: true }).click();
   await page.getByRole("button", { name: /Проверка понимания — тест/ }).click();
   await page.getByRole("button", { name: "Удалить критерий", exact: true }).click();
   await page.getByRole("button", { name: "Удалить критерий", exact: true }).click();
   await save.click();
   await expect(save).toBeDisabled();
-  const final = await (await page.request.get("/api/workspace")).json();
-  expect(final.checklists[0].version).toBe(added.version + 1);
-  expect(final.checklists[0].criteria.some((r: {id: string}) => r.id === criterion.id)).toBe(false);
+  const removed = (await workspace()).checklists.find((item: { id: string }) => item.id === checklist.id);
+  expect(removed.version).toBe(added.version + 1);
+  expect(removed.criteria).toEqual(checklist.criteria);
+  await page.goto(dialogUrl);
+  await expect(page.locator(".checklist-next-run li").filter({ hasText: criterion.name })).toHaveCount(0);
+  await run(removed);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toHaveCount(0);
+
+  // History must render its saved rubric, not the current editor configuration.
+  await page.goto(`${dialogUrl}?evaluation=${encodeURIComponent(withAdded.id)}`);
+  await expect(page.locator(".criterion-result")).toHaveCount(added.criteria.length);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toContainText("Вес 25");
   await page.reload();
-  await expect(page.getByRole("button", { name: /Проверка понимания — тест/ })).toHaveCount(0);
+  await expect(page.locator(".criterion-result").filter({ hasText: criterion.name })).toContainText("Вес 25");
+  const final = await workspace();
+  expect(final.evaluations.find((item: { id: string }) => item.id === original.id)).toEqual(original);
+  expect(final.evaluations.find((item: { id: string }) => item.id === withAdded.id)).toEqual(withAdded);
 });
 
 test("API link import preserves history, shows transcript and audio, and never starts analysis", async ({ page }, testInfo) => {
@@ -675,10 +715,43 @@ test("official JSON file keeps organizer IDs through analysis and JSON download"
   await page.getByRole("button", { name: "Оценить", exact: true }).click();
   await expect(page.locator(".score-number")).toBeVisible();
   const event = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать результат JSON", exact: true }).click();
+  await page.getByRole("button", { name: "Скачать JSON этого диалога", exact: true }).click();
   const exported = JSON.parse(await readFile((await (await event).path())!, "utf8"));
   expect(exported.conversation_id).toBe(originalId);
   expect(exported.dataset_group_id).toBe("CONTROL-JSON");
   expect(exported.results).toHaveLength(8);
   expect(exported.source_kind).toBe("server");
+});
+
+test("official dataset JSON export is explicit, preserves server errors and never starts evaluation", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "enabled-fixture", "Synthetic export only");
+  const evaluationRequests: string[] = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/evaluations") evaluationRequests.push(request.url());
+  });
+  await page.goto("/");
+  const panel = page.getByRole("region", { name: "Официальный JSON всего набора", exact: true });
+  await expect(panel.getByLabel("Название команды", { exact: true })).toHaveValue("Amazing Guys");
+  await panel.getByRole("button", { name: "Скачать официальный JSON набора", exact: true }).click();
+  await expect(panel.getByRole("alert")).toBeVisible(); // Real fixture has fewer than65; no fabricated successful export.
+  await page.route("**/api/exports/submission", route => route.fulfill({ status: 422, json: { code: "SUBMISSION_INVALID", message: "Последняя оценка использует изменённый чек-лист." } }));
+  await panel.getByRole("button", { name: "Скачать официальный JSON набора", exact: true }).click();
+  await expect(panel.getByRole("alert")).toHaveText("Последняя оценка использует изменённый чек-лист.");
+  await page.unroute("**/api/exports/submission");
+  let payload: unknown;
+  const document = { schema_version: "1.0", team_name: "Synthetic Team", model: { mode: "local", name: "synthetic" }, results: Array.from({ length: 10 }, (_, i) => ({ conversation_id: `synthetic-${i}`, status: "error", criteria: [], score: null, error: "Synthetic missing assessment" })) };
+  await page.route("**/api/exports/submission", route => {
+    payload = route.request().postDataJSON();
+    return route.fulfill({ json: document });
+  });
+  await panel.locator("#submission-count").selectOption("10");
+  await panel.getByLabel("Название команды", { exact: true }).fill("Synthetic Team");
+  const groupId = await panel.locator("#submission-group").inputValue();
+  const event = page.waitForEvent("download");
+  await panel.getByRole("button", { name: "Скачать официальный JSON набора", exact: true }).click();
+  const download = await event;
+  expect(download.suggestedFilename()).toBe("results.json");
+  expect(JSON.parse(await readFile((await download.path())!, "utf8"))).toEqual(document);
+  expect(payload).toEqual({ groupId, teamName: "Synthetic Team", expectedCount: 10 });
+  expect(evaluationRequests).toEqual([]);
 });
