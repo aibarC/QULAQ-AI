@@ -44,6 +44,7 @@ async function start() {
       localClassifier,
     });
   const app = createApp({
+    submissionModelName: config.model,
     store,
     initialChecklist,
     datasetPath: config.datasetPath,

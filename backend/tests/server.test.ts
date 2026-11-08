@@ -749,3 +749,20 @@ test("official JSON file IDs survive import, group isolation and scoring without
   assert.equal((await f.post("/api/datasets/upload", source)).status, 409);
   assert.deepEqual(f.store.snapshot(), state);
 });
+
+test("official submission endpoint returns direct document without invoking evaluator and gives actionable validation errors", async (t) => {
+  let calls = 0;
+  const f = await fixture(t, { submissionModelName: "configured-only", evaluate: async (input) => { calls++; return outcome(input); } });
+  await f.store.mutate((draft) => {
+    draft.conversations = Array.from({ length: 10 }, (_, i) => ({ ...structuredClone(record), id: `PROD:${i}`, externalId: `external-${i}`, groupId: "PROD", status: "unrated", demo: false }));
+  });
+  const response = await f.post("/api/exports/submission", { groupId: "PROD", teamName: "Amazing Guys", expectedCount: 10 });
+  assert.equal(response.status, 200);
+  const document = await response.json();
+  assert.equal(document.schema_version, "1.0"); assert.equal(document.results.length, 10);
+  assert.equal(document.model.name, "configured-only"); assert.equal(document.conversations, undefined);
+  assert.ok(document.results.every((r: { status: string }) => r.status === "error"));
+  const bad = await f.post("/api/exports/submission", { groupId: "PROD", teamName: "Amazing Guys", expectedCount: 65 });
+  assert.equal(bad.status, 422); assert.equal((await bad.json()).code, "SUBMISSION_INVALID");
+  assert.equal(calls, 0);
+});

@@ -1,3 +1,4 @@
+import { buildSubmission, SubmissionExportError } from "./submission-export.ts";
 import { DatasetImportError, type DatasetUrlImporter } from "./dataset-import.ts";
 import { DYNAMIC_IMPROVEMENT_VERSION, usesCanonicalAnalysis } from "./two-stage-prompts.ts";
 import { LayaError } from "./laya.ts";
@@ -27,6 +28,7 @@ import type {
 import type { WorkspaceStore } from "./store.ts";
 
 export interface AppOptions {
+  submissionModelName?: string;
   store: WorkspaceStore;
   initialChecklist: Checklist;
   evaluate(input: {
@@ -309,6 +311,19 @@ export function createApp(options: AppOptions): Server {
       if (request.method !== "POST")
         throw new HttpError(404, "NOT_FOUND", "Маршрут не найден.");
       const input = await body(request);
+      if (path === "/api/exports/submission") {
+        try {
+          const document = buildSubmission(store.snapshot(), {
+            groupId: field(input, "groupId"), teamName: field(input, "teamName"),
+            expectedCount: input.expectedCount as 65 | 10,
+            fallbackModelName: options.submissionModelName,
+          });
+          return send(response, 200, document);
+        } catch (error) {
+          if (error instanceof SubmissionExportError) throw new HttpError(422, error.code, error.message);
+          throw error;
+        }
+      }
 
       if (path === "/api/datasets/import-url") {
         if (!options.importDatasetUrl)

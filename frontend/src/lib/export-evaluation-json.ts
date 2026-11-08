@@ -1,10 +1,13 @@
 import type { Conversation, Evaluation } from "./types";
 import { parseWorkspace } from "./validation";
 
-/** QULAQ's versioned result format, not an unverified organizer submission schema. */
+/** QULAQ's detailed single-record format; official dataset submission is a separate server export. */
 export function evaluationJson(conversation: Conversation, evaluation: Evaluation, source?: string): string {
+  // A read-only reference preview intentionally belongs to a real source record.
+  // Mark only the validation copy as synthetic; never mutate persisted data.
+  const validationRecord = source && evaluation.demo ? { ...conversation, demo: true } : conversation;
   const state = parseWorkspace({
-    conversations: [conversation], checklists: [evaluation.checklist], evaluations: [evaluation], appeals: [],
+    conversations: [validationRecord], checklists: [evaluation.checklist], evaluations: [evaluation], appeals: [],
   });
   const record = state.conversations[0];
   const run = state.evaluations[0];

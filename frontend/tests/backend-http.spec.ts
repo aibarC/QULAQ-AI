@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import ExcelJS from "exceljs";
 
 // Real localhost HTTP/store/scorer integration, with a synthetic injected
 // evaluator. These tests provide no evidence about a live LLM or gateway.
@@ -120,20 +119,9 @@ test("real local HTTP persists upload, analysis, separate improvement, export an
   await expect(page.locator(".message.highlighted")).toContainText(
     "Синтетический ответ HTTP.",
   );
-  const downloadEvent = page.waitForEvent("download");
-  await page
-    .getByRole("button", { name: "Скачать результат XLSX", exact: true })
-    .click();
-  const download = await downloadEvent;
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile((await download.path())!);
-  expect(workbook.getWorksheet("Результат")!.getCell("B9").value).toBe(85);
-  expect(workbook.getWorksheet("Результат")!.getCell("B3").value).toBe(
-    "Результат сервера",
-  );
-  expect(workbook.getWorksheet("Транскрипт")!.rowCount).toBe(3);
+  await expect(page.getByRole("button", { name: /XLSX/ })).toHaveCount(0);
   const jsonDownloadEvent = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать результат JSON", exact: true }).click();
+  await page.getByRole("button", { name: "Скачать JSON этого диалога", exact: true }).click();
   const jsonDownload = await jsonDownloadEvent;
   expect(jsonDownload.suggestedFilename()).toMatch(/\.json$/);
   const jsonResult = JSON.parse(await readFile((await jsonDownload.path())!, "utf8"));
@@ -727,10 +715,43 @@ test("official JSON file keeps organizer IDs through analysis and JSON download"
   await page.getByRole("button", { name: "Оценить", exact: true }).click();
   await expect(page.locator(".score-number")).toBeVisible();
   const event = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать результат JSON", exact: true }).click();
+  await page.getByRole("button", { name: "Скачать JSON этого диалога", exact: true }).click();
   const exported = JSON.parse(await readFile((await (await event).path())!, "utf8"));
   expect(exported.conversation_id).toBe(originalId);
   expect(exported.dataset_group_id).toBe("CONTROL-JSON");
   expect(exported.results).toHaveLength(8);
   expect(exported.source_kind).toBe("server");
+});
+
+test("official dataset JSON export is explicit, preserves server errors and never starts evaluation", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "enabled-fixture", "Synthetic export only");
+  const evaluationRequests: string[] = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/evaluations") evaluationRequests.push(request.url());
+  });
+  await page.goto("/");
+  const panel = page.getByRole("region", { name: "Официальный JSON всего набора", exact: true });
+  await expect(panel.getByLabel("Название команды", { exact: true })).toHaveValue("Amazing Guys");
+  await panel.getByRole("button", { name: "Скачать официальный JSON набора", exact: true }).click();
+  await expect(panel.getByRole("alert")).toBeVisible(); // Real fixture has fewer than65; no fabricated successful export.
+  await page.route("**/api/exports/submission", route => route.fulfill({ status: 422, json: { code: "SUBMISSION_INVALID", message: "Последняя оценка использует изменённый чек-лист." } }));
+  await panel.getByRole("button", { name: "Скачать официальный JSON набора", exact: true }).click();
+  await expect(panel.getByRole("alert")).toHaveText("Последняя оценка использует изменённый чек-лист.");
+  await page.unroute("**/api/exports/submission");
+  let payload: unknown;
+  const document = { schema_version: "1.0", team_name: "Synthetic Team", model: { mode: "local", name: "synthetic" }, results: Array.from({ length: 10 }, (_, i) => ({ conversation_id: `synthetic-${i}`, status: "error", criteria: [], score: null, error: "Synthetic missing assessment" })) };
+  await page.route("**/api/exports/submission", route => {
+    payload = route.request().postDataJSON();
+    return route.fulfill({ json: document });
+  });
+  await panel.locator("#submission-count").selectOption("10");
+  await panel.getByLabel("Название команды", { exact: true }).fill("Synthetic Team");
+  const groupId = await panel.locator("#submission-group").inputValue();
+  const event = page.waitForEvent("download");
+  await panel.getByRole("button", { name: "Скачать официальный JSON набора", exact: true }).click();
+  const download = await event;
+  expect(download.suggestedFilename()).toBe("results.json");
+  expect(JSON.parse(await readFile((await download.path())!, "utf8"))).toEqual(document);
+  expect(payload).toEqual({ groupId, teamName: "Synthetic Team", expectedCount: 10 });
+  expect(evaluationRequests).toEqual([]);
 });

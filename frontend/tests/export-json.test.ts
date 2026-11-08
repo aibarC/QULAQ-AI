@@ -66,3 +66,18 @@ test("JSON refuses mismatched records, missing criteria and foreign evidence", (
     assert.throws(() => evaluationJson(conversation,evaluation));
   }
 });
+
+test("explicit reference preview exports against a real record without mutating its provenance", () => {
+  const { conversation, evaluation } = fixture();
+  evaluation.demo = true;
+  const beforeRecord = structuredClone(conversation);
+  const beforeEvaluation = structuredClone(evaluation);
+  assert.throws(() => evaluationJson(conversation, evaluation), /неизвестным диалогом/);
+  const exported = JSON.parse(evaluationJson(conversation, evaluation, "Excel reference preview"));
+  assert.equal(exported.source_kind, "preview");
+  assert.equal(exported.source_description, "Excel reference preview");
+  assert.equal(exported.conversation_id, conversation.externalId);
+  assert.deepEqual(conversation, beforeRecord);
+  assert.deepEqual(evaluation, beforeEvaluation);
+  assert.equal(conversation.demo, false);
+});
