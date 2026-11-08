@@ -8,7 +8,7 @@ import { initialChecklist, scoreModelOutput } from "../src/scoring.ts";
 import { demoConversation } from "../../frontend/src/lib/fixtures.ts";
 import type { Evaluation } from "../../frontend/src/lib/types.ts";
 import { buildImprovementMessages, parseImprovementOutput, usesCanonicalAnalysis } from "../src/two-stage-prompts.ts";
-import { readModelOutput } from "../src/two-stage-transport.ts";
+import { readModelOutput, withAbort } from "../src/two-stage-transport.ts";
 import { createGatewayProvider } from "../src/provider.ts";
 
 const conversation = structuredClone(demoConversation);
@@ -147,6 +147,20 @@ test("SSE handles split UTF-8, CRLF, comments and rejects missing DONE or trunca
     { choices: [{ delta: { content: ' ' }, finish_reason: null }] },
   ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
   await assert.rejects(() => readModelOutput(afterStop, signal), /LLM_INVALID_STREAM/);
+});
+
+test("an already-aborted signal observes immediate and later operation rejections", async () => {
+  const signal = AbortSignal.abort();
+  await assert.rejects(
+    withAbort(Promise.reject(new Error("Synthetic immediate rejection")), signal),
+    /LLM_REQUEST_ABORTED/,
+  );
+  let rejectLater!: (error: Error) => void;
+  const operation = new Promise<never>((_, reject) => { rejectLater = reject; });
+  await assert.rejects(withAbort(operation, signal), /LLM_REQUEST_ABORTED/);
+  rejectLater(new Error("Synthetic later rejection"));
+  // Let Node process unhandled rejections; node:test fails if either escapes.
+  await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
 test("a stalled response body obeys cancellation even if the stream ignores the signal", async () => {
