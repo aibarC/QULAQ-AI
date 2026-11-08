@@ -1,6 +1,11 @@
 /** The same deadline covers headers and the complete body, including stalled streams. */
 export async function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) throw new Error("LLM_REQUEST_ABORTED");
+  if (signal.aborted) {
+    // The operation has already started; observe its rejection even when
+    // cancellation wins before we can attach the Promise.race handlers.
+    void operation.catch(() => undefined);
+    throw new Error("LLM_REQUEST_ABORTED");
+  }
   let listener!: () => void;
   const aborted = new Promise<never>((_, reject) => {
     listener = () => reject(new Error("LLM_REQUEST_ABORTED"));
