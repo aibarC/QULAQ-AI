@@ -5,7 +5,6 @@ import MotionSettings from "./components/MotionSettings";
 import SplitWorkspace from "./components/SplitWorkspace";
 import ListeningStage from "./components/ListeningStage";
 import UploadTranscript from "./components/UploadTranscript";
-import ExportSubmission from "./components/ExportSubmission";
 import ImportApiDataset from "./components/ImportApiDataset";
 import ConversationRow from "./components/ConversationRow";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -1075,7 +1074,6 @@ export default function App() {
                       return { count: records.length, audioCount: records.filter((c) => !!c.audioUrl).length };
                     }} />
                   )}
-                  {adapter.mode === "api" && <ExportSubmission conversations={workspace.conversations} disabled={!!busy || hasRunning} />}
                   <UploadTranscript
                     onImport={
                       adapter.mode === "api"
