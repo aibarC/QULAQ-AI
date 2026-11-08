@@ -1,0 +1,52 @@
+.api-dataset-import {
+  min-width: 0;
+  margin: 22px 0 16px;
+  padding: 22px 24px;
+  border: 1px solid #d9d2e9;
+  border-radius: 18px;
+  background: linear-gradient(115deg, #f8f5fc, #fff 70%, #f2faf8);
+  color: #493552;
+}
+.api-import-heading { display: flex; align-items: center; gap: 13px; margin-bottom: 18px; }
+.api-import-heading > div { min-width: 0; }
+.api-import-symbol { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; border-radius: 13px; color: #6c4a99; background: #ece5f7; border: 1px solid #ded2ee; }
+.api-import-heading h2 { margin: 0; font-size: 18px; line-height: 1.4; letter-spacing: -.025em; font-weight: 750; }
+.api-import-heading p { margin: 4px 0 0; color: #70627e; font-size: 12px; line-height: 1.6; }
+.api-import-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.api-import-label { display: block; font-size: 11px; font-weight: 650; line-height: 1.5; color: #675177; margin-bottom: 6px; }
+.api-import-url-row { display: flex; align-items: stretch; gap: 10px; }
+.api-import-url-row .api-import-url { min-width: 0; flex: 1; background: #fff; font-size: 13px; }
+.api-import-url-row .api-import-submit { min-height: 44px; white-space: nowrap; gap: 8px; flex-shrink: 0; }
+.api-import-submit[aria-busy="true"] { cursor: progress; }
+.api-import-options { margin-top: 11px; }
+.api-import-options summary { display: inline-flex; align-items: center; gap: 6px; color: #6d5686; font-size: 11px; font-weight: 650; cursor: pointer; padding: 4px 0; list-style: none; }
+.api-import-options summary::-webkit-details-marker { display: none; }
+.api-import-options summary svg { transition: transform 180ms ease; }
+.api-import-options[open] summary svg { transform: rotate(180deg); }
+.api-import-group { display: grid; grid-template-columns: minmax(120px, 240px) 1fr; gap: 6px 16px; align-items: center; padding-top: 10px; }
+.api-import-group .api-import-label { grid-column: 1 / -1; margin: 0; }
+.api-import-group .input { min-width: 0; width: 100%; }
+.api-import-group p { margin: 0; color: #70627e; font-size: 11px; line-height: 1.6; }
+.api-import-help { margin: 11px 0 0; max-width: 85ch; color: #70627e; font-size: 11px; line-height: 1.7; }
+.api-import-progress { margin: 12px 0 0; color: #624482; font-size: 12px; line-height: 1.6; }
+.api-import-error { margin: 13px 0 0; padding: 11px 13px; border-radius: 10px; border: 1px solid #e6cbd6; background: #fff5f8; color: #913c59; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.api-import-success { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 13px 15px; border: 1px solid #c7dfd7; border-radius: 12px; background: #f0f9f5; color: #236d61; animation: api-import-appear 220ms ease-out; }
+.api-import-success > svg { margin-top: 2px; flex-shrink: 0; }
+.api-import-success strong { font-size: 13px; }
+.api-import-success p { margin: 4px 0; font-size: 12px; line-height: 1.6; }
+.api-import-success span { display: block; font-size: 11px; line-height: 1.6; color: #456c62; }
+.api-dataset-import .input:focus-visible, .api-import-options summary:focus-visible, .api-import-submit:focus-visible { outline: 2px solid #8764b5; outline-offset: 3px; }
+.api-import-spinner { animation: api-import-spin 1s linear infinite; }
+@keyframes api-import-spin { to { transform: rotate(360deg); } }
+@keyframes api-import-appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 600px) {
+  .api-dataset-import { padding: 17px; margin-top: 18px; }
+  .api-import-url-row { flex-direction: column; }
+  .api-import-url-row .api-import-submit { width: 100%; }
+  .api-import-group { grid-template-columns: 1fr; }
+  .api-import-heading { align-items: flex-start; }
+  .api-import-heading h2 { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .api-dataset-import *, .api-import-success { animation: none !important; transition: none !important; }
+}

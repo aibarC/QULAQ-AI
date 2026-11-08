@@ -8,7 +8,9 @@ import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createApp, type AppOptions } from "../src/server.ts";
 import { createStore } from "../src/store.ts";
+import { createDatasetImporter, DatasetImportError } from "../src/dataset-import.ts";
 import { createGatewayProvider } from "../src/provider.ts";
+import { scoreModelOutput } from "../src/scoring.ts";
 import { LayaError, LAYA_MODEL, LAYA_REVISION } from "../src/laya.ts";
 import type {
   Checklist,
@@ -366,7 +368,7 @@ test("DEV and UPLOAD imports are idempotent and conflicting transcript IDs do no
   );
   assert.equal(
     (await f.post("/api/datasets/upload", rawDataset("DEV"))).status,
-    422,
+    200,
   );
 });
 
@@ -654,4 +656,96 @@ test("custom checklist improvement uses its saved snapshot even after rules are 
   assert.equal(updated.total, original.total);
   assert.deepEqual(updated.results, original.results);
   assert.equal(updated.improvement?.promptVersion, "dynamic-checklist-v1/conversation_improvement");
+});
+
+test("URL import merges a control group idempotently with audio and preserves saved evaluations", async (t) => {
+  let gatewayCalls = 0, downloads = 0;
+  const source = rawDataset("CONTROL");
+  const incoming = source.data.records[0] as { channel: string; audio_url: string | null; transcript: { timestamp: string; speaker: string; text: string }[] };
+  incoming.channel = "voice call";
+  incoming.audio_url = "https://audio.example.test/control.mp3";
+  incoming.transcript[0].timestamp = "2026-11-08T13:10:00+05:00";
+  const importer = createDatasetImporter({
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    transport: async (url) => {
+      downloads++;
+      assert.equal(url.searchParams.get("group_id"), "CONTROL");
+      return { statusCode: 200, headers: {}, body: (async function* () { yield Buffer.from(JSON.stringify(source)); })() };
+    },
+  });
+  const f = await fixture(t, { importDatasetUrl: importer, evaluate: async () => { gatewayCalls++; throw new Error("Forbidden model call"); } });
+  await seedClassifiableEvaluation(f.store);
+  const before = f.store.snapshot();
+  const payload = { url: "https://datasets.example.test/api?group_id=DEV&signature=private-api-signature", groupId: "CONTROL" };
+  for (let i = 0; i < 2; i++) {
+    const response = await f.post("/api/datasets/import-url", payload);
+    assert.equal(response.status, 200);
+    const state = await response.json() as Workspace;
+    assert.equal(state.conversations.length, 2);
+    const imported = state.conversations.find((item) => item.groupId === "CONTROL")!;
+    assert.equal(imported.audioUrl, incoming.audio_url);
+    assert.equal(imported.messages[0].timestamp, incoming.transcript[0].timestamp);
+    assert.deepEqual(state.evaluations, JSON.parse(JSON.stringify(before.evaluations)));
+    assert.deepEqual(state.appeals, before.appeals);
+    assert.ok(!JSON.stringify(state).includes("private-api-signature"));
+  }
+  const saved = f.store.snapshot();
+  incoming.transcript[0].text = "Changed remote content with the same ID";
+  assert.equal((await f.post("/api/datasets/import-url", payload)).status, 409);
+  assert.deepEqual(f.store.snapshot(), saved);
+  assert.equal(downloads, 3);
+  assert.equal(gatewayCalls, 0);
+});
+
+test("URL import errors are safe and leave workspace untouched", async (t) => {
+  const disabled = await fixture(t);
+  assert.equal((await disabled.post("/api/datasets/import-url", { url: "https://example.test/api" })).status, 503);
+  for (const typed of [true, false]) {
+    const f = await fixture(t, { importDatasetUrl: async () => {
+      throw typed ? new DatasetImportError("DATASET_TIMEOUT") : new Error("secret signed API URL and response");
+    } });
+    const before = f.store.snapshot();
+    const response = await f.post("/api/datasets/import-url", { url: "https://example.test/api?token=secret" });
+    assert.equal(response.status, typed ? 504 : 502);
+    const error = await response.json();
+    assert.equal(error.code, typed ? "DATASET_TIMEOUT" : "DATASET_FETCH_FAILED");
+    assert.ok(!JSON.stringify(error).includes("secret"));
+    assert.deepEqual(f.store.snapshot(), before);
+  }
+});
+
+test("official JSON file IDs survive import, group isolation and scoring without changing existing results", async (t) => {
+  const f = await fixture(t, { allowEvaluation: true, evaluate: async ({ conversation, checklist }) =>
+    scoreModelOutput(conversation, checklist, { results: checklist.criteria.map((criterion) => ({
+      criterion_id: criterion.id, status: "scored", value: criterion.type === "flag" ? false : true,
+      reason: "Synthetic checked rule.", evidence_ids: [conversation.messages[0].id], evidence_kind: "messages",
+    })) }),
+  });
+  await seedClassifiableEvaluation(f.store);
+  const original = structuredClone(f.store.snapshot().evaluations);
+  const source = rawDataset("CONTROL");
+  const externalId = "界".repeat(300);
+  source.data.records[0].conversation_id = externalId;
+  const recordId = `CONTROL:${encodeURIComponent(externalId)}`;
+  for (let repeat = 0; repeat < 2; repeat++)
+    assert.equal((await f.post("/api/datasets/upload", source)).status, 200);
+  const other = structuredClone(source);
+  other.data.dataset_group_id = "OTHER";
+  assert.equal((await f.post("/api/datasets/upload", other)).status, 200);
+  assert.equal(f.store.snapshot().conversations.length, 3);
+  assert.equal(f.store.snapshot().conversations.find((item) => item.id === recordId)!.externalId, externalId);
+  assert.equal((await f.post("/api/evaluations", { recordId, checklistId: rules.id })).status, 202);
+  for (let i = 0; i < 200 && f.store.snapshot().conversations.find((item) => item.id === recordId)!.status === "evaluating"; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  const state = f.store.snapshot();
+  const scored = state.evaluations.find((item) => item.recordId === recordId)!;
+  assert.ok(scored);
+  assert.equal(scored.total, 100);
+  assert.equal(scored.results[0].evidence[0].messageIds[0], `${recordId}:m0`);
+  assert.deepEqual(state.evaluations.filter((item) => item.recordId !== recordId), original);
+  const served = await (await fetch(`${f.base}/api/workspace`)).json() as Workspace;
+  assert.equal(served.conversations.find((item) => item.id === recordId)!.externalId, externalId);
+  source.data.records[0].transcript[0].text = "Changed source under same original ID";
+  assert.equal((await f.post("/api/datasets/upload", source)).status, 409);
+  assert.deepEqual(f.store.snapshot(), state);
 });

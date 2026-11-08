@@ -10,6 +10,7 @@ import {
 import type { Conversation } from "../lib/types";
 import { parseDataset } from "../lib/validation";
 import { makeUploadDataset } from "../lib/upload-dataset";
+import { extractPdfTranscript } from "../lib/pdf-transcript";
 import "./upload-transcript.css";
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -22,7 +23,7 @@ const speakerNames = {
   system: "Система",
 };
 type LocalFile =
-  | { kind: "txt"; name: string; size: number; text: string; lines: number }
+  | { kind: "txt" | "pdf"; name: string; size: number; text: string; lines: number }
   | { kind: "json"; name: string; size: number; conversations: Conversation[] };
 
 function readJsonDataset(text: string): Conversation[] {
@@ -63,6 +64,7 @@ export default function UploadTranscript({
   const componentId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
+  const pdfController = useRef<AbortController | null>(null);
   const dragDepth = useRef(0);
   const [file, setFile] = useState<LocalFile | null>(null);
   const [language, setLanguage] = useState<Conversation["language"]>("RU");
@@ -77,6 +79,7 @@ export default function UploadTranscript({
   useEffect(
     () => () => {
       generation.current++;
+      pdfController.current?.abort();
     },
     [],
   );
@@ -85,8 +88,8 @@ export default function UploadTranscript({
     if (busy || sending) return;
     setError("");
     const extension = candidate.name.split(".").at(-1)?.toLowerCase();
-    if (extension !== "txt" && extension !== "json") {
-      setError("Поддерживаются только файлы .txt и .json.");
+    if (extension !== "txt" && extension !== "json" && extension !== "pdf") {
+      setError("Поддерживаются TXT, JSON и текстовые PDF.");
       return;
     }
     if (candidate.size > MAX_BYTES) {
@@ -111,7 +114,10 @@ export default function UploadTranscript({
       const bytes = await candidate.arrayBuffer();
       if (request !== generation.current) return;
       let text: string;
-      try {
+      if (extension === "pdf") {
+        pdfController.current = new AbortController();
+        text = await extractPdfTranscript(bytes, pdfController.current.signal);
+      } else try {
         text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       } catch {
         throw new Error(
@@ -137,7 +143,7 @@ export default function UploadTranscript({
         };
       } else {
         next = {
-          kind: "txt",
+          kind: extension === "pdf" ? "pdf" : "txt",
           name: candidate.name,
           size: candidate.size,
           text,
@@ -166,6 +172,7 @@ export default function UploadTranscript({
 
   function resetFile() {
     generation.current++;
+    pdfController.current?.abort();
     setFile(null);
     setError("");
     setBusy(false);
@@ -263,7 +270,7 @@ export default function UploadTranscript({
                 ? "Отпустите файл здесь"
                 : "Перетащите файл сюда"}
           </strong>
-          <span>TXT или JSON · UTF-8 · до 5 МБ</span>
+          <span>TXT, PDF или JSON · до 5 МБ</span>
         </div>
         <div className="upload-file-controls">
           {file?.kind !== "json" && (
@@ -271,7 +278,7 @@ export default function UploadTranscript({
               className="upload-language"
               htmlFor={`${componentId}-language`}
             >
-              Язык TXT
+              Язык TXT / PDF
               <select
                 id={`${componentId}-language`}
                 className="select"
@@ -291,7 +298,7 @@ export default function UploadTranscript({
             ref={inputRef}
             className="sr-only"
             type="file"
-            accept=".txt,.json,text/plain,application/json"
+            accept=".txt,.pdf,.json,text/plain,application/pdf,application/json"
             aria-label="Файл транскрипта"
             tabIndex={-1}
             disabled={busy || sending}
@@ -391,10 +398,10 @@ export default function UploadTranscript({
                 role="region"
                 aria-label="Предпросмотр загруженного транскрипта"
               >
-                {file.kind === "txt" ? (
+                {file.kind !== "json" ? (
                   <>
                     <div className="upload-preview-caption">
-                      <span>Исходный текст · {language}</span>
+                      <span>{file.kind === "pdf" ? "Текст из PDF" : "Исходный текст"} · {language}</span>
                       <span>Без добавленных временных меток</span>
                     </div>
                     <pre className="upload-text-preview">{file.text}</pre>
@@ -489,7 +496,7 @@ export default function UploadTranscript({
           </p>
           <span>
             {onImport
-              ? "Кнопка ниже отправит транскрипт вашему серверу. Для TXT нужны подписи «Клиент:» и «Оператор:». Вызов модели при загрузке не выполняется."
+              ? "Кнопка ниже отправит транскрипт вашему серверу. Для TXT и PDF нужны подписи «Клиент:» и «Оператор:». Вызов модели при загрузке не выполняется."
               : "Файл не отправляется на сервер и исчезнет после перезагрузки страницы."}
           </span>
         </div>
@@ -507,6 +514,13 @@ export default function UploadTranscript({
               : "Анализировать"}
         </button>
       </div>
+      <details className="upload-format-help">
+        <summary>Как подготовить TXT или PDF?</summary>
+        <p>Подпишите реплики: «Клиент: текст» и «Оператор: текст». Время перед репликой необязательно.
+          TXT должен быть в UTF-8. В PDF нужен выделяемый текст на каждой странице (до 100 страниц и 200 000 символов).
+          Сканам требуется предварительное OCR. Текст извлекается локально; проверьте порядок реплик
+          в предпросмотре, особенно для таблиц и нескольких колонок.</p>
+      </details>
       <details className="upload-format-help">
         <summary>Какой JSON поддерживается?</summary>
         <p>

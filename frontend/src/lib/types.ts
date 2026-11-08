@@ -135,6 +135,7 @@ export interface WorkspaceAdapter {
   classifyReason(evaluationId: string): Promise<Workspace>;
   improveConversation(evaluationId: string): Promise<Workspace>;
   importDataset(groupId: string): Promise<Workspace>;
+  importDatasetUrl(url: string, groupId?: string): Promise<Workspace>;
   uploadDataset(dataset: unknown): Promise<Workspace>;
   saveChecklist(checklist: Checklist): Promise<Workspace>;
   evaluate(recordId: string, checklistId: string): Promise<Workspace>;

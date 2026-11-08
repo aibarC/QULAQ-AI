@@ -54,7 +54,7 @@ for (const width of [1440, 390]) {
       if (new URL(request.url()).pathname.startsWith("/api/") || request.method() !== "GET") outgoing.push(request.url());
     });
     await expect(upload.getByRole("button", { name: "Анализировать", exact: true })).toBeDisabled();
-    await upload.getByRole("combobox", { name: "Язык TXT", exact: true }).selectOption("KZ");
+    await upload.getByRole("combobox", { name: "Язык TXT / PDF", exact: true }).selectOption("KZ");
     const chooserEvent = page.waitForEvent("filechooser");
     await upload.getByRole("button", { name: "Выбрать файл", exact: true }).click();
     const chooser = await chooserEvent;
@@ -73,7 +73,8 @@ for (const width of [1440, 390]) {
 
     const input = upload.getByLabel("Файл транскрипта", { exact: true });
     for (const invalid of [
-      { name: "unsupported.pdf", buffer: Buffer.from("example"), error: "Поддерживаются только файлы .txt и .json" },
+      { name: "unsupported.docx", buffer: Buffer.from("example"), error: "Поддерживаются TXT, JSON и текстовые PDF" },
+      { name: "invalid.pdf", buffer: Buffer.from("example"), error: "Файл не похож на PDF" },
       { name: "broken.json", buffer: Buffer.from("{"), error: "Не удалось прочитать JSON" },
       { name: "empty.txt", buffer: Buffer.from("   "), error: "Файл пуст" },
       { name: "large.txt", buffer: Buffer.alloc(5 * 1024 * 1024 + 1, "a"), error: "Файл слишком большой" },
@@ -97,7 +98,7 @@ for (const width of [1440, 390]) {
     await expect(upload.getByRole("alert")).toHaveCount(0);
     await expect(preview.getByText("Synthetic uploaded JSON message.", { exact: true })).toBeVisible();
     await expect(preview.locator(".upload-message-time")).toHaveText("02:13");
-    await expect(upload.getByRole("combobox", { name: "Язык TXT", exact: true })).toHaveCount(0);
+    await expect(upload.getByRole("combobox", { name: "Язык TXT / PDF", exact: true })).toHaveCount(0);
     await expect(upload.getByRole("button", { name: "Анализировать", exact: true })).toBeDisabled();
     await expect(page.locator(".score-card")).toHaveCount(0);
     await expect(page.locator(".conversation-row")).toHaveCount(4);

@@ -5,6 +5,7 @@ import MotionSettings from "./components/MotionSettings";
 import SplitWorkspace from "./components/SplitWorkspace";
 import ListeningStage from "./components/ListeningStage";
 import UploadTranscript from "./components/UploadTranscript";
+import ImportApiDataset from "./components/ImportApiDataset";
 import ConversationRow from "./components/ConversationRow";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -273,7 +274,7 @@ export default function App() {
     const task = (async () => {
       try {
         let next = await adapter.load();
-        if (!next.conversations.some((record) => !record.demo)) {
+        if (adapter.mode === "local" && !next.conversations.some((record) => !record.demo)) {
           if (mountedRef.current) setBusy("import");
           try {
             next = await adapter.importDataset("DEV");
@@ -1065,6 +1066,14 @@ export default function App() {
                       }}
                     />
                   )}
+                  {adapter.mode === "api" && (
+                    <ImportApiDataset disabled={!!busy || hasRunning} onImport={async (url, groupId) => {
+                      const next = await mutate("import-url", () => adapter.importDatasetUrl(url, groupId));
+                      setQuery(""); setLanguage("all"); setChannel("all"); setStatus("all"); setPage(1);
+                      const records = next.conversations.filter((c) => !c.demo);
+                      return { count: records.length, audioCount: records.filter((c) => !!c.audioUrl).length };
+                    }} />
+                  )}
                   <UploadTranscript
                     onImport={
                       adapter.mode === "api"
@@ -1079,7 +1088,7 @@ export default function App() {
                         : undefined
                     }
                   />
-                  <div className="dataset-bar panel">
+                  {adapter.mode === "local" && <div className="dataset-bar panel">
                     <div className="dataset-label">
                       <span className="dataset-icon">
                         <Download size={21} />
@@ -1110,7 +1119,8 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  {importError && (
+                  }
+                  {adapter.mode === "local" && importError && (
                     <div className="dataset-import-error">
                       <ErrorBox>{importError}</ErrorBox>
                       <button
@@ -1556,13 +1566,17 @@ export default function App() {
                         </footer>
                       </section>
                     </>
+                  ) : adapter.mode === "api" ? (
+                    <Empty icon={<Inbox size={28} />} title="Добавьте разговоры">
+                      Вставьте ссылку API или загрузите PDF, TXT либо JSON выше. Диалоги появятся здесь без автоматического анализа.
+                    </Empty>
                   ) : (
                     <ListeningStage
                       disabled={!demo}
                       onDemo={() => demo && go({ page: "dialog", id: demo.id })}
                     />
                   )}
-                  <button
+                  {adapter.mode === "local" && <button
                     className="demo-entry"
                     disabled={!demo}
                     onClick={() => demo && go({ page: "dialog", id: demo.id })}
@@ -1581,7 +1595,7 @@ export default function App() {
                       Открыть пример
                       <ArrowRight size={17} />
                     </span>
-                  </button>
+                  </button>}
                 </>
               )}
               {route.page === "dialog" &&
@@ -2089,7 +2103,7 @@ export default function App() {
             </p>
             <ol>
               <li>
-                <strong>Загрузите набор.</strong> Разговоры появятся без оценок.
+                <strong>Загрузите разговоры.</strong> Вставьте ссылку API или выберите PDF, TXT либо JSON. Загрузка не запускает оценку.
               </li>
               <li>
                 <strong>Выберите правила.</strong> Чек-лист задаёт критерии и

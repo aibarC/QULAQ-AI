@@ -3609,3 +3609,7 @@ h3 {
 .checklist-next-run li { display: flex; align-items: baseline; gap: 16px; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #e7e1f1; font-size: 12px; }
 .checklist-next-run li span { min-width: 0; overflow-wrap: anywhere; }
 .checklist-next-run li strong { flex-shrink: 0; color: #514176; }
+
+.result-export-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.result-export-options { min-width: 0; }
+.result-export-options [role="alert"] { font-size: 12px; line-height: 1.6; color: #9a3737; }

@@ -1,5 +1,6 @@
+import { parseDataset } from "../../frontend/src/lib/validation.ts";
 /** Synthetic HTTP fixture only. Never import index, provider, config or dotenv. */
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server.ts";
@@ -54,7 +55,7 @@ for (const [port, allowEvaluation] of [
   [8002, false],
 ] as const) {
   const initial: Workspace = {
-    conversations: [],
+    conversations: parseDataset(JSON.parse(await readFile(datasetPath, "utf8")), "DEV"),
     checklists: [structuredClone(initialChecklist)],
     evaluations: [],
     appeals: [],
@@ -67,6 +68,16 @@ for (const [port, allowEvaluation] of [
     store,
     datasetPath,
     initialChecklist,
+    importDatasetUrl: async ({ url, groupId }) => {
+      if (!url.startsWith("https://datasets.example.test/")) throw new Error("Synthetic URL only");
+      const group = groupId ?? "CONTROL";
+      return parseDataset({ isSuccess: true, data: { dataset_group_id: group, total_records: 1, records: [{
+        conversation_id: "api-synthetic-voice", language: "RU", channel: "voice call",
+        audio_url: "https://audio.example.test/sample.mp3",
+        transcript: [{ speaker: "client", timestamp: "00:00", text: "Синтетический вопрос из API." },
+          { speaker: "operator", timestamp: "00:01", text: "Синтетический ответ из API." }],
+      }] } }, group);
+    },
     recalculate,
     allowEvaluation,
     allowImprovement: allowEvaluation,

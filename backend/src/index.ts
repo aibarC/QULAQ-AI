@@ -1,3 +1,4 @@
+import { createDatasetImporter } from "./dataset-import.ts";
 import { resolve } from "node:path";
 import { getRuntimeConfig, repositoryRoot } from "./config.ts";
 import { createGatewayProvider } from "./provider.ts";
@@ -46,6 +47,7 @@ async function start() {
     store,
     initialChecklist,
     datasetPath: config.datasetPath,
+    importDatasetUrl: createDatasetImporter(),
     allowEvaluation: config.allowEvaluation,
     recalculate,
     classifyReason: localClassifier

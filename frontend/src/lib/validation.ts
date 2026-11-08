@@ -11,13 +11,15 @@ import type {
 } from "./types";
 
 const id = z.string().min(1).max(300);
+// Namespaced, URL-encoded source IDs can be longer than their external 300-character IDs.
+const internalId = z.string().min(1).max(4096);
 export const coachingSchema = z
   .object({
     response: z.string().trim().min(1).max(2000).nullable(),
     explanation: z.string().trim().min(1).max(2000),
     needsContext: z.boolean(),
     messageIds: z
-      .array(id)
+      .array(internalId)
       .min(1)
       .max(100)
       .refine((ids) => new Set(ids).size === ids.length),
@@ -46,7 +48,7 @@ export function parseCriterionCoaching(
 }
 const contactCategory = z.enum(CONTACT_REASON_GROUPS.map((group) => group.id));
 const contactEvidence = z
-  .array(id)
+  .array(internalId)
   .max(100)
   .refine(
     (ids) => new Set(ids).size === ids.length,
@@ -218,13 +220,13 @@ export const checklistSchema = z
       });
   });
 const messageSchema = z.object({
-  id,
+  id: internalId,
   timestamp: z.string().max(100),
   speaker: z.enum(["operator", "client", "bot", "system"]),
   text,
 });
 const conversationSchema = z.object({
-  id,
+  id: internalId,
   externalId: id,
   groupId: id,
   channel: z.enum(["agent chat", "voice call"]),
@@ -235,7 +237,7 @@ const conversationSchema = z.object({
   demo: z.boolean().optional(),
 });
 const evidenceSchema = z.object({
-  messageIds: z.array(id).min(1).max(20_000),
+  messageIds: z.array(internalId).min(1).max(20_000),
   quote: text,
   kind: z.enum(["quote", "range"]),
 });
@@ -261,7 +263,7 @@ const date = z
   .refine((value) => Number.isFinite(Date.parse(value)), "Некорректная дата");
 const evaluationSchema = z.object({
   id,
-  recordId: id,
+  recordId: internalId,
   createdAt: date,
   checklist: checklistSchema,
   results: z.array(resultSchema).max(100),
@@ -299,7 +301,7 @@ const evaluationSchema = z.object({
 });
 const appealSchema = z.object({
   id,
-  recordId: id,
+  recordId: internalId,
   evaluationId: id,
   criterionId: id,
   comment: z.string().trim().min(1).max(4000),

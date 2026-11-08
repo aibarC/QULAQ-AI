@@ -59,6 +59,18 @@ function initialWorkspace(): Workspace {
 class EvaluationDisabledError extends Error {}
 async function readResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
+    const importMessages: Record<string, string> = {
+      INVALID_DATASET_URL: "Вставьте полную HTTPS-ссылку API организаторов.",
+      DATASET_ADDRESS_DENIED: "Нужна публичная HTTPS-ссылка API. Локальные и внутренние адреса не поддерживаются.",
+      DATASET_FETCH_FAILED: "API не вернул набор. Проверьте срок действия ссылки и доступ к ней.",
+      DATASET_TIMEOUT: "API не ответил вовремя. Попробуйте загрузку позже.",
+      DATASET_TOO_LARGE: "Набор превышает допустимый размер 5 МБ.",
+      INVALID_REMOTE_DATASET: "По ссылке нет набора в формате организаторов: нужны транскрипты и ID диалогов.",
+      DATASET_IMPORT_DISABLED: "Загрузка по ссылке не подключена на сервере.",
+    };
+    const details = await response.clone().json().catch(() => null);
+    if (details && typeof details.code === "string" && Object.hasOwn(importMessages, details.code))
+      throw new Error(importMessages[details.code]);
     const detail = await response.clone().json().catch(() => null);
     if (detail?.code === "IMPROVEMENT_DISABLED")
       throw new Error("Генерация примера отключена на сервере. Сохранённый анализ доступен.");
@@ -214,6 +226,7 @@ export function createLocalAdapter(
   }
   return {
     mode: "local",
+    importDatasetUrl: async () => { throw new Error("Для загрузки по API подключите локальный сервер."); },
     improveConversation: async () => {
       throw new Error("Для генерации рекомендации подключите сервер с доступом к модели.");
     },
@@ -429,6 +442,9 @@ export function createApiAdapter(
   };
   return {
     mode: "api",
+    importDatasetUrl: (url, groupId) => {
+      return request("/datasets/import-url", { url: url.trim(), ...(groupId?.trim() ? { groupId: groupId.trim() } : {}) }, 45_000);
+    },
     improveConversation: async (evaluationId) => {
       try {
         return await request(`/evaluations/${encodeURIComponent(evaluationId)}/improvement`, {}, 180_000);
@@ -454,7 +470,10 @@ export function createApiAdapter(
         150_000,
       ),
     uploadDataset: (dataset) => {
-      parseDataset(dataset, "UPLOAD");
+      const groupId = (dataset as { data?: { dataset_group_id?: unknown } })?.data?.dataset_group_id;
+      if (typeof groupId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(groupId))
+        throw new Error("Укажите корректную группу в JSON-наборе.");
+      parseDataset(dataset, groupId);
       return request("/datasets/upload", dataset);
     },
     load: () => request("/workspace"),

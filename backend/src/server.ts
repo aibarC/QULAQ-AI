@@ -1,3 +1,4 @@
+import { DatasetImportError, type DatasetUrlImporter } from "./dataset-import.ts";
 import { DYNAMIC_IMPROVEMENT_VERSION, usesCanonicalAnalysis } from "./two-stage-prompts.ts";
 import { LayaError } from "./laya.ts";
 import {
@@ -49,6 +50,7 @@ export interface AppOptions {
     evaluation: Evaluation,
   ) => Promise<ContactReason>;
   datasetPath: string;
+  importDatasetUrl?: DatasetUrlImporter;
 }
 
 class HttpError extends Error {
@@ -308,6 +310,28 @@ export function createApp(options: AppOptions): Server {
         throw new HttpError(404, "NOT_FOUND", "Маршрут не найден.");
       const input = await body(request);
 
+      if (path === "/api/datasets/import-url") {
+        if (!options.importDatasetUrl)
+          throw new HttpError(503, "DATASET_IMPORT_DISABLED", "Импорт по ссылке не подключён на этом сервере.");
+        if (Object.keys(input).some((key) => key !== "url" && key !== "groupId"))
+          throw new HttpError(422, "INVALID_DATASET_URL", "Укажите ссылку и необязательную группу набора.");
+        const url = field(input, "url", 8192);
+        const groupId = input.groupId === undefined ? undefined : field(input, "groupId", 100);
+        const controller = new AbortController();
+        const disconnected = () => { if (!response.writableEnded) controller.abort(); };
+        response.on("close", disconnected);
+        try {
+          let records: Conversation[];
+          try { records = await options.importDatasetUrl({ url, ...(groupId === undefined ? {} : { groupId }) }, controller.signal); }
+          catch (error) {
+            if (error instanceof DatasetImportError) throw new HttpError(error.status, error.code, error.message);
+            throw new HttpError(502, "DATASET_FETCH_FAILED", "Не удалось загрузить набор. Проверьте доступность ссылки.");
+          }
+          if (controller.signal.aborted) return;
+          return reply(response, 200, await store.mutate((draft) => mergeConversations(draft, records)));
+        } finally { response.off("close", disconnected); }
+      }
+
       if (path === "/api/datasets/import" || path === "/api/datasets/upload") {
         let records: Conversation[];
         if (path.endsWith("/import")) {
@@ -338,12 +362,14 @@ export function createApp(options: AppOptions): Server {
           }
         } else {
           try {
-            records = parseDataset(input, "UPLOAD");
+            const groupId = (input.data as { dataset_group_id?: unknown } | undefined)?.dataset_group_id;
+            if (typeof groupId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(groupId)) throw new Error("Invalid group");
+            records = parseDataset(input, groupId);
           } catch {
             throw new HttpError(
               422,
               "INVALID_DATASET",
-              "Проверьте формат набора UPLOAD.",
+              "Проверьте формат JSON-набора и его группу.",
             );
           }
           if (
@@ -533,7 +559,7 @@ export function createApp(options: AppOptions): Server {
             "EVALUATION_DISABLED",
             "Вызовы модели отключены. Требуется отдельное разрешение на тест.",
           );
-        const recordId = field(input, "recordId"),
+        const recordId = field(input, "recordId", 4096),
           checklistId = field(input, "checklistId");
         let created: Job | undefined;
         const workspace = await store.mutate((draft) => {

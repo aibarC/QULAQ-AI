@@ -316,7 +316,7 @@ function evidenceFromModel(
     !Array.isArray(ids) ||
     !ids.length ||
     ids.length > 100 ||
-    ids.some((id) => !text(id, 2000))
+    ids.some((id) => !text(id, 4096))
   ) {
     throw new ModelOutputError("нужны существующие ID доказательств.");
   }
@@ -374,7 +374,7 @@ export function scoreModelOutput(
     !conversation.messages.some((message) => message.text.trim()) ||
     new Set(conversation.messages.map((message) => message.id)).size !==
       conversation.messages.length ||
-    conversation.messages.some((message) => !text(message.id, 2000))
+    conversation.messages.some((message) => !text(message.id, 4096))
   ) {
     throw new Error(
       "Для оценки нужен непустой транскрипт с уникальными ID реплик.",

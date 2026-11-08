@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
 
@@ -131,6 +132,18 @@ test("real local HTTP persists upload, analysis, separate improvement, export an
     "Результат сервера",
   );
   expect(workbook.getWorksheet("Транскрипт")!.rowCount).toBe(3);
+  const jsonDownloadEvent = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать результат JSON", exact: true }).click();
+  const jsonDownload = await jsonDownloadEvent;
+  expect(jsonDownload.suggestedFilename()).toMatch(/\.json$/);
+  const jsonResult = JSON.parse(await readFile((await jsonDownload.path())!, "utf8"));
+  const exportedRecord = savedAfterImprovement.conversations.find((r: { id: string }) => r.id === analysisBeforeImprovement.recordId);
+  expect(jsonResult.conversation_id).toBe(exportedRecord.externalId);
+  expect(jsonResult.total).toBe(85);
+  expect(jsonResult.results).toHaveLength(8);
+  expect(jsonResult.transcript).toHaveLength(2);
+  expect(jsonResult.conversation_improvement.text).toContain("Синтетический пример");
+
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: "/tmp/qulaq-http-result.png",
@@ -607,4 +620,65 @@ test("checklist editor saves additions and deletions for the next analysis", asy
   expect(final.checklists[0].criteria.some((r: {id: string}) => r.id === criterion.id)).toBe(false);
   await page.reload();
   await expect(page.getByRole("button", { name: /Проверка понимания — тест/ })).toHaveCount(0);
+});
+
+test("API link import preserves history, shows transcript and audio, and never starts analysis", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "enabled-fixture", "Synthetic importer only");
+  const requests: string[] = [];
+  page.on("request", r => { if (r.method() === "POST") requests.push(new URL(r.url()).pathname); });
+  await page.goto("/");
+  const before = await (await page.request.get("/api/workspace")).json();
+  const form = page.getByRole("region", { name: "Загрузить по ссылке API", exact: true });
+  await form.getByLabel("Ссылка API организаторов", { exact: true }).fill("https://datasets.example.test/api?group_id=CONTROL&sig=synthetic");
+  await form.getByRole("button", { name: "Загрузить диалоги", exact: true }).click();
+  await expect(form.getByRole("status")).toContainText("Набор загружен");
+  await expect(form.getByLabel("Ссылка API организаторов", { exact: true })).toHaveValue("");
+  const after = await (await page.request.get("/api/workspace")).json();
+  expect(after.evaluations).toEqual(before.evaluations);
+  expect(after.appeals).toEqual(before.appeals);
+  const added = after.conversations.find((r: {id: string}) => r.id === "CONTROL:api-synthetic-voice");
+  expect(added.status).toBe("unrated");
+  expect(added.audioUrl).toBe("https://audio.example.test/sample.mp3");
+  expect(requests).toEqual(["/api/datasets/import-url"]);
+  await page.locator('.conversation-row').filter({ hasText: "api-synthetic-voice" }).click();
+  await expect(page.locator(".message").first()).toContainText("Синтетический вопрос из API");
+  await expect(page.getByRole("link", { name: "Открыть запись" })).toHaveAttribute("href", added.audioUrl);
+});
+
+test("empty API workspace waits for an explicit import and does not restore DEV", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "enabled-fixture", "One project suffices");
+  const state = await (await page.request.get("/api/workspace")).json();
+  await page.route("**/api/workspace", route => route.fulfill({ json: {...state, conversations: [], evaluations: [], appeals: []} }));
+  const posts: string[] = [];
+  page.on("request", r => { if (r.method() === "POST") posts.push(r.url()); });
+  await page.goto("/");
+  await expect(page.getByRole("region", { name: "Загрузить по ссылке API", exact: true })).toBeVisible();
+  await expect(page.locator(".conversation-row")).toHaveCount(0);
+  expect(posts).toEqual([]);
+});
+
+test("official JSON file keeps organizer IDs through analysis and JSON download", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "enabled-fixture", "Synthetic evaluator only");
+  const originalId = "control-001/қазақ";
+  await page.goto("/");
+  await page.getByLabel("Файл транскрипта", { exact: true }).setInputFiles({
+    name: "control.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify({
+      isSuccess: true, data: { dataset_group_id: "CONTROL-JSON", total_records: 1, records: [{
+        conversation_id: originalId, channel: "agent chat", language: "KZ", audio_url: null,
+        transcript: [{ timestamp: "00:00", speaker: "client", text: "Синтетический вопрос." },
+          { timestamp: "00:01", speaker: "operator", text: "Синтетический ответ." }],
+      }] },
+    })),
+  });
+  await page.getByRole("button", { name: "Открыть для анализа", exact: true }).click();
+  await expect(page.getByRole("heading", { name: originalId, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Оценить", exact: true }).click();
+  await expect(page.locator(".score-number")).toBeVisible();
+  const event = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать результат JSON", exact: true }).click();
+  const exported = JSON.parse(await readFile((await (await event).path())!, "utf8"));
+  expect(exported.conversation_id).toBe(originalId);
+  expect(exported.dataset_group_id).toBe("CONTROL-JSON");
+  expect(exported.results).toHaveLength(8);
+  expect(exported.source_kind).toBe("server");
 });
