@@ -173,7 +173,7 @@ results/
 Нужны **Node.js 24+**, npm и Git. Для реального анализа требуется доступ к API модели.
 
 ```sh
-git clone --branch codex/backend-submission-export https://github.com/aibarC/QULAQ-AI.git
+git clone https://github.com/aibarC/QULAQ-AI.git
 cd QULAQ-AI
 npm run setup
 cp .env.example .env
