@@ -37,8 +37,8 @@
     "conversation_improvement.system.txt": "bd93d45906f7ebd8be1796ec33a1ca0971f909f11d6845efb15807a6e2f09028"
   },
   "validation_scope": {
-    "analysis": "C6 cleanup tested on10 selected dialogues; C7 clarification on5; no full65 run of combined final prompt.",
+    "analysis": "Final full65_c6c7_two_stage_v1: 65/65 valid, 479/520 exact reference agreement; six targeted C6 reasons fixed with values retained; target C7 fixed and four controls retained. Not full semantic audit.",
     "conversation_improvement": "Four additive-generation examples: two usable; one redundant clarification; one omitted farewell. Original analysis preserved by code, not regenerated."
   },
-  "deployment_status": "Prompt package only; no website or API endpoint implementation included."
+  "deployment_status": "Integrated in website/backend; final DEV65 run completed. Optional improvement remains a separate user-triggered call."
 }

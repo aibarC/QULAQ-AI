@@ -22,6 +22,8 @@ const outputPath = resolve(required('output'));
 const teamName = required('team');
 const groupId = required('group');
 const count = Number(required('count'));
+const checklistSnapshot = args.find(arg => arg.startsWith('--checklist='))?.slice('--checklist='.length) ?? 'legacy-c6';
+assert(['legacy-c6', 'current'].includes(checklistSnapshot), 'Expected --checklist=legacy-c6 or --checklist=current');
 assert(count === 65 || count === 10, 'Expected count must be 65 or 10');
 const readJson = async (path: string) => JSON.parse(await readFile(path, 'utf8'));
 const dataset = await readJson(datasetPath);
@@ -37,9 +39,17 @@ assert.deepEqual(Object.keys(savedRecords).sort(), expectedIds);
 assert.deepEqual(savedResponses.map(row => row.conversation_id).sort(), expectedIds);
 const responseMap = new Map(savedResponses.map(row => [row.conversation_id, row]));
 const checklist = structuredClone(initialChecklist);
-// Source run used the official rubric before the C6 wording cleanup. Preserve that
-// snapshot; do not present these historical answers as a run of the new prompt.
-checklist.criteria[checklist.criteria.findIndex(c => c.id === 'c6')] = structuredClone(legacyC6);
+// Historical sources default to the original snapshot. Final C6/C7 runs must
+// explicitly select --checklist=current; conversion never changes model answers.
+if (checklistSnapshot === 'legacy-c6')
+  checklist.criteria[checklist.criteria.findIndex(c => c.id === 'c6')] = structuredClone(legacyC6);
+const requestedModels = [...new Set(savedResponses.map(row => {
+  assert(typeof row.model === 'string' && row.model.trim(), 'Missing requested model');
+  if (row.reported_model !== undefined)
+    assert.equal(row.reported_model, row.model, 'Resolve a model alias/report mismatch before export');
+  return row.model.trim();
+}))];
+assert.equal(requestedModels.length, 1, 'Expected one model in this saved run');
 const evaluations: Evaluation[] = [];
 for (const conversation of conversations) {
   const saved = savedRecords[conversation.externalId];
@@ -54,6 +64,13 @@ for (const conversation of conversations) {
     messageMap.set(a.id, b.id);
   }
   const response = responseMap.get(conversation.externalId)!;
+  assert(Array.isArray(response.validation_errors), 'Missing saved validation result');
+  if (response.validation_errors.length > 0) {
+    // Preserve failed/invalid attempts in the official dataset instead of hiding
+    // them, substituting an older success, or turning them into a zero score.
+    conversation.status = 'error';
+    continue;
+  }
   assert.equal(response.http, 200);
   assert.deepEqual(response.validation_errors, []);
   assert.equal(response.sse_done, true);
@@ -61,7 +78,7 @@ for (const conversation of conversations) {
   assert.equal(typeof response.model, 'string');
   assert.equal(response.reported_model, response.model, 'Resolve a model alias/report mismatch before export');
   const raw = JSON.parse(response.content);
-  assert.deepEqual(Object.keys(raw), ['results'], 'This historical converter accepts criteria-only saved outputs');
+  assert.deepEqual(Object.keys(raw), ['results'], 'This converter accepts criteria-only saved outputs');
   assert(raw.results.every((r: Record<string, unknown>) => !Object.hasOwn(r, 'coaching')), 'Coaching payloads need separate ID normalization');
   assert.deepEqual(response.parsed, raw);
   for (const result of raw.results) {
@@ -86,7 +103,7 @@ for (const conversation of conversations) {
   });
 }
 const workspace: Workspace = parseWorkspace({ conversations, checklists: [checklist], evaluations, appeals: [] });
-const document = buildSubmission(workspace, { groupId, teamName, expectedCount: count as 65 | 10 });
+const document = buildSubmission(workspace, { groupId, teamName, expectedCount: count as 65 | 10, fallbackModelName: requestedModels[0] });
 await mkdir(dirname(outputPath), { recursive: true });
 await writeFile(outputPath, JSON.stringify(document, null, 2) + '\n', { flag: 'wx' });
 const workspacePath = args.find(arg => arg.startsWith('--workspace-output='))?.slice('--workspace-output='.length);
@@ -97,5 +114,5 @@ if (workspacePath) {
 const hashes = {} as Record<string, string>;
 for (const [name, path] of [['dataset', datasetPath], ['saved_records', recordsPath], ['saved_responses', responsesPath], ['submission', outputPath]])
   hashes[name] = createHash('sha256').update(await readFile(path)).digest('hex');
-console.log(JSON.stringify({ converted: count, criteria: count * 8, team: teamName, models: [...new Set(savedResponses.map(row => row.model))],
+console.log(JSON.stringify({ converted: count, successful: evaluations.length, errors: count - evaluations.length, criteria: evaluations.length * 8, checklistSnapshot, team: teamName, models: [...new Set(savedResponses.map(row => row.model))],
   sourceVersions: [...new Set(savedResponses.map(row => row.version))], modelCalls: 0, hashes }, null, 2));
