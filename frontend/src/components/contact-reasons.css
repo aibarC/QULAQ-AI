@@ -33,7 +33,7 @@
   gap: 35px;
   margin: 23px 0 18px;
   padding-bottom: 20px;
-  border-bottom: 1px solid #e8dfef;
+  border-bottom: 1px solid #c0b9c9;
 }
 .contact-counts dt {
   font-size: 11px;
@@ -81,7 +81,7 @@
 }
 .contact-category[aria-pressed="true"] {
   background: #eee6f7;
-  border-color: #cdb7e0;
+  border-color: #aa9abd;
   color: #563466;
 }
 .contact-category-name {
@@ -110,7 +110,7 @@
 }
 .contact-category-missing {
   margin-top: 8px;
-  border-top-color: #e8dfef;
+  border-top-color: #c0b9c9;
 }
 .contact-muted {
   color: #765783;
@@ -182,7 +182,7 @@
   color: #70577c;
 }
 .contact-record {
-  border-top: 1px solid #e8dfef;
+  border-top: 1px solid #c0b9c9;
   padding: 19px 0;
 }
 .contact-record-heading {
@@ -305,7 +305,7 @@
 .contact-readonly {
   margin-top: 18px;
   padding-top: 12px;
-  border-top: 1px solid #e8dfef;
+  border-top: 1px solid #c0b9c9;
 }
 .contact-laya-note {
   margin: -10px 0 22px;

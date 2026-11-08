@@ -5,8 +5,8 @@
   gap: 44px;
   padding: 28px 0 24px;
   margin-bottom: 26px;
-  border-top: 1px solid #dedbea;
-  border-bottom: 1px solid #dedbea;
+  border-top: 1px solid #b8b6c5;
+  border-bottom: 1px solid #b8b6c5;
   color: #202039;
   animation: signal-arrive 500ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -78,7 +78,7 @@
   gap: 8px;
   padding: 8px 20px 12px;
   border: 0;
-  border-left: 1px solid #dedbea;
+  border-left: 1px solid #b8b6c5;
   border-radius: 0;
   background: transparent;
   color: #202039;

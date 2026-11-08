@@ -2,14 +2,14 @@
   min-width: 0;
   margin: 22px 0 16px;
   padding: 22px 24px;
-  border: 1px solid #d9d2e9;
+  border: 1px solid #b4afc4;
   border-radius: 18px;
   background: linear-gradient(115deg, #f8f5fc, #fff 70%, #f2faf8);
   color: #493552;
 }
 .api-import-heading { display: flex; align-items: center; gap: 13px; margin-bottom: 18px; }
 .api-import-heading > div { min-width: 0; }
-.api-import-symbol { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; border-radius: 13px; color: #6c4a99; background: #ece5f7; border: 1px solid #ded2ee; }
+.api-import-symbol { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; border-radius: 13px; color: #6c4a99; background: #ece5f7; border: 1px solid #b8afc8; }
 .api-import-heading h2 { margin: 0; font-size: 18px; line-height: 1.4; letter-spacing: -.025em; font-weight: 750; }
 .api-import-heading p { margin: 4px 0 0; color: #70627e; font-size: 12px; line-height: 1.6; }
 .api-import-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -29,8 +29,8 @@
 .api-import-group p { margin: 0; color: #70627e; font-size: 11px; line-height: 1.6; }
 .api-import-help { margin: 11px 0 0; max-width: 85ch; color: #70627e; font-size: 11px; line-height: 1.7; }
 .api-import-progress { margin: 12px 0 0; color: #624482; font-size: 12px; line-height: 1.6; }
-.api-import-error { margin: 13px 0 0; padding: 11px 13px; border-radius: 10px; border: 1px solid #e6cbd6; background: #fff5f8; color: #913c59; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
-.api-import-success { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 13px 15px; border: 1px solid #c7dfd7; border-radius: 12px; background: #f0f9f5; color: #236d61; animation: api-import-appear 220ms ease-out; }
+.api-import-error { margin: 13px 0 0; padding: 11px 13px; border-radius: 10px; border: 1px solid #bea9b5; background: #fff5f8; color: #913c59; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.api-import-success { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 13px 15px; border: 1px solid #a6b9b6; border-radius: 12px; background: #f0f9f5; color: #236d61; animation: api-import-appear 220ms ease-out; }
 .api-import-success > svg { margin-top: 2px; flex-shrink: 0; }
 .api-import-success strong { font-size: 13px; }
 .api-import-success p { margin: 4px 0; font-size: 12px; line-height: 1.6; }

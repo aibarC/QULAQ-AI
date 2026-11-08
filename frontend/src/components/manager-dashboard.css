@@ -32,7 +32,7 @@
   flex-shrink: 0;
   align-items: center;
   gap: 7px;
-  border: 1px solid #dfd5e9;
+  border: 1px solid #b9b1c4;
   border-radius: 20px;
   padding: 8px 12px;
   color: #765783;
@@ -84,7 +84,7 @@
   border-radius: 10px;
   padding: 13px 16px;
   background: #fff4f8;
-  border: 1px solid #ecd0df;
+  border: 1px solid #c3adbc;
   color: #765783;
   font-size: 12px;
 }
@@ -114,7 +114,7 @@
 }
 .manager-metric {
   padding: 24px;
-  border: 1px solid #e3d9ec;
+  border: 1px solid #bcb4c6;
   border-radius: 16px;
   background: #fff;
 }
@@ -146,7 +146,7 @@
 }
 .manager-primary-metric {
   background: linear-gradient(125deg, #efe7f7, #f7f3fc 70%, #ecf2fc);
-  border-color: #d5c3e5;
+  border-color: #b1a3c1;
 }
 .manager-primary-metric > strong {
   color: #765783;
@@ -224,7 +224,7 @@
   margin-bottom: 14px;
 }
 .manager-daily-details {
-  border-top: 1px solid #ece3f2;
+  border-top: 1px solid #c3bccb;
 }
 .manager-daily-details > summary {
   display: flex;
@@ -262,7 +262,7 @@
 .manager-daily-scroll th,
 .manager-daily-scroll td {
   padding: 10px 12px;
-  border-bottom: 1px solid #eee7f3;
+  border-bottom: 1px solid #c4bfcc;
   text-align: right;
   color: #765783;
   font-variant-numeric: tabular-nums;
@@ -309,7 +309,7 @@
 }
 .manager-issue {
   padding: 19px 0;
-  border-top: 1px solid #eee5f4;
+  border-top: 1px solid #c4bdcd;
 }
 .manager-issue-top,
 .manager-issue-top > div {
@@ -389,7 +389,7 @@
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  border: 1px solid #e2d3ec;
+  border: 1px solid #bbafc6;
   background: #fbf7fe;
   color: #765783;
   border-radius: 7px;
@@ -456,7 +456,7 @@
   gap: 12px;
   margin: 16px 0 24px;
   padding-bottom: 17px;
-  border-bottom: 1px solid #ece1f3;
+  border-bottom: 1px solid #c3bacc;
 }
 .manager-detail-score > span {
   font-size: 11px;
@@ -537,7 +537,7 @@
 }
 .manager-detail-readonly {
   margin-top: 19px;
-  border-top: 1px solid #eee5f4;
+  border-top: 1px solid #c4bdcd;
   padding-top: 14px;
 }
 @keyframes manager-detail-in {

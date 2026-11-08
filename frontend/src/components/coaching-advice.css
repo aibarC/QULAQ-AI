@@ -1,4 +1,4 @@
-.coaching-advice { margin: 13px 0 8px; padding: 15px; border: 1px solid #c6dcd6; border-radius: 12px; background: linear-gradient(130deg,#f1faf6,#f9fcfb); color: #284e48; }
+.coaching-advice { margin: 13px 0 8px; padding: 15px; border: 1px solid #a5b6b5; border-radius: 12px; background: linear-gradient(130deg,#f1faf6,#f9fcfb); color: #284e48; }
 .coaching-heading { display: flex; align-items: center; gap: 8px; }
 .coaching-heading svg { flex-shrink: 0; color: #197164; }
 .coaching-heading h4 { font-size: 13px; font-weight: 750; margin: 0; }

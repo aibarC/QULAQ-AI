@@ -4,7 +4,7 @@
   align-items: center;
   gap: 20px;
   padding: 18px 22px;
-  border-bottom: 1px solid #e6dff1;
+  border-bottom: 1px solid #beb9ca;
   background: linear-gradient(105deg, #f7f3fe, #f3f8fd);
   border-radius: 15px 15px 0 0;
 }
@@ -49,7 +49,7 @@
   gap: 7px;
   flex-shrink: 0;
   padding: 8px 11px;
-  border: 1px solid #d9cbea;
+  border: 1px solid #b4a9c5;
   border-radius: 8px;
   background: #ffffffa8;
   color: #816291;
@@ -102,8 +102,8 @@
   height: 46px;
   padding: 13px 22px;
   background: #f4f0fb;
-  border-top: 1px solid #e5daf0;
-  border-bottom: 1px solid #e8dff2;
+  border-top: 1px solid #bdb5ca;
+  border-bottom: 1px solid #c0b9cb;
   text-align: left;
   color: #76568e;
   font-size: 12px;

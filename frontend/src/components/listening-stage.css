@@ -8,7 +8,7 @@
     linear-gradient(125deg, #fcfcff, #eeedf9 60%, #f8f7ff);
   isolation: isolate;
   margin: 18px 0 26px;
-  border: 1px solid #e7e6f4;
+  border: 1px solid #bfbecd;
   border-radius: 30px;
   box-shadow:
     inset 0 1px 0 #fff,
@@ -160,7 +160,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid #d5d2e9;
+  border: 1px solid #b1afc4;
   border-radius: 50px;
   padding: 8px 11px;
   font-size: 10px;
@@ -218,7 +218,7 @@
   position: relative;
   text-align: left;
   border: 0;
-  border-bottom: 1px solid #d5d2e6;
+  border-bottom: 1px solid #b1afc2;
   background: none;
   padding: 0 0 14px;
   flex: 1;

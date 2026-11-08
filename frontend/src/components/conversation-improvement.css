@@ -1,6 +1,6 @@
 .conversation-improvement {
   margin: 18px 0; padding: 20px; min-width: 0; position: relative;
-  border: 1px solid #c4dce9; border-radius: 18px;
+  border: 1px solid #a3b6c4; border-radius: 18px;
   background: linear-gradient(120deg, #edf3ff 0%, #f0f9fc 55%, #eaf8f3 100%);
   box-shadow: 0 5px 20px #24557608; color: #193b53;
 }
@@ -15,7 +15,7 @@
 .improvement-generate:not(:disabled):active { transform: translateY(0); }
 .improvement-generate:disabled { opacity: .65; cursor: not-allowed; box-shadow: none; }
 .improvement-generate[aria-busy="true"] { opacity: 1; cursor: progress; }
-.improvement-answer { margin-top: 17px; padding: 15px 17px; border: 1px solid #d5e4ed; border-left: 3px solid #4595aa; border-radius: 4px 12px 12px 4px; background: #ffffffc9; animation: improvement-reveal 240ms ease-out; }
+.improvement-answer { margin-top: 17px; padding: 15px 17px; border: 1px solid #b1bdc7; border-left: 3px solid #4595aa; border-radius: 4px 12px 12px 4px; background: #ffffffc9; animation: improvement-reveal 240ms ease-out; }
 .conversation-improvement .improvement-label { margin: 0 0 9px; color: #527281; font-size: 10px; line-height: 1.5; }
 .conversation-improvement .improvement-text { margin: 0; font-size: 13px; line-height: 1.85; color: #27465a; white-space: pre-wrap; overflow-wrap: anywhere; }
 .improvement-expand { display: inline-flex; align-items: center; gap: 7px; padding: 8px 0; border: 0; background: transparent; color: #255c88; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; text-align: left; }
@@ -24,7 +24,7 @@
 .improvement-expand:hover { color: #133c60; text-decoration: underline; }
 .improvement-generate:focus-visible, .improvement-expand:focus-visible { outline: 3px solid #3a73b5; outline-offset: 4px; }
 .conversation-improvement .improvement-note, .conversation-improvement .improvement-footnote { margin: 10px 0 0; font-size: 11px; line-height: 1.65; color: #526b7c; }
-.improvement-error { margin-top: 12px; padding: 12px; background: #fff4f2; border: 1px solid #e9c7c2; border-radius: 10px; }
+.improvement-error { margin-top: 12px; padding: 12px; background: #fff4f2; border: 1px solid #c0a6a6; border-radius: 10px; }
 .improvement-error p { margin: 0; font-size: 12px; line-height: 1.65; color: #8a3832; overflow-wrap: anywhere; }
 .improvement-spinner { animation: improvement-spin 1s linear infinite; }
 @keyframes improvement-spin { to { transform: rotate(360deg); } }
