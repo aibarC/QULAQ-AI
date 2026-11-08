@@ -3599,3 +3599,13 @@ h3 {
   .topbar .role-control { flex: 1; }
   .topbar .role-control button { flex: 1; padding: 7px 5px; gap: 4px; }
 }
+
+/* The saved result and the next run may use different checklist versions. */
+.checklist-next-run { padding: 16px 18px; margin: 14px 0; border: 1px solid #d8d1ee; background: linear-gradient(120deg,#f5f2fc,#f8fbfe); }
+.checklist-next-run summary { color: #514176; font-size: 13px; font-weight: 750; cursor: pointer; line-height: 1.6; }
+.checklist-next-run summary:focus-visible { outline: 2px solid #7862ab; outline-offset: 4px; border-radius: 4px; }
+.checklist-next-run p, .checklist-change-note { color: #665e78; font-size: 12px; line-height: 1.7; margin: 10px 0; }
+.checklist-next-run ul { padding: 0; margin: 12px 0; list-style: none; }
+.checklist-next-run li { display: flex; align-items: baseline; gap: 16px; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #e7e1f1; font-size: 12px; }
+.checklist-next-run li span { min-width: 0; overflow-wrap: anywhere; }
+.checklist-next-run li strong { flex-shrink: 0; color: #514176; }

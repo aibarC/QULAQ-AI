@@ -158,6 +158,8 @@ export default function EvaluationPanel(p: Props) {
 
   const chosen =
     p.checklists.find((c) => c.id === checklistId) || p.checklists[0];
+  const rulesChanged = !!evaluation && !!chosen &&
+    (evaluation.checklist.id !== chosen.id || evaluation.checklist.version !== chosen.version);
   const isIssue = (r: CriterionResult) => {
     const criterion = evaluation?.checklist.criteria.find(
       (c) => c.id === r.criterionId,
@@ -280,6 +282,19 @@ export default function EvaluationPanel(p: Props) {
           </div>
         )}
       </div>
+      {!isPreview && chosen && evaluation && !p.evaluating && (
+        <details className="panel checklist-next-run" key={`${evaluation.id}:${chosen.id}:${chosen.version}`} open={rulesChanged}>
+          <summary>Правила следующей оценки · v{chosen.version} · {chosen.criteria.length} критериев</summary>
+          <p>{rulesChanged
+            ? `Показанный результат рассчитан по «${evaluation.checklist.name}», v${evaluation.checklist.version}. Следующий запуск применит «${chosen.name}», v${chosen.version}.`
+            : "Следующий запуск использует эту сохранённую версию чек-листа."}</p>
+          <p>Добавленные критерии будут оценены, удалённые — исключены. Старые результаты и апелляции сохранят свои правила.</p>
+          <ul>{chosen.criteria.map((criterion) => (
+            <li key={criterion.id}><span>{criterion.name}</span><strong>{criterion.type === "flag" ? "Без баллов" : `Вес ${criterion.weight}`}</strong></li>
+          ))}</ul>
+          <p>Итог нормируется до 100 баллов по весам применимых критериев; N/A исключается из расчёта.</p>
+        </details>
+      )}
       {!isPreview && p.evaluating && (
         <div className="evaluation-loading panel quality-loading" role="status">
           <div className="quality-activity" aria-hidden="true">

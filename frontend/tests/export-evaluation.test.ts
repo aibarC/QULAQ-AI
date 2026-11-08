@@ -38,3 +38,23 @@ test("XLSX preserves server totals, criterion points and timestamps without inte
     ExcelJS.ValueType.String,
   );
 });
+
+test("XLSX exports the saved custom criteria and excludes deleted rules", async () => {
+  const evaluation = makeDemoEvaluation(defaultChecklist);
+  const custom = { ...structuredClone(evaluation.checklist.criteria[0]), id: "custom-rule", name: "Новое правило", weight: 25 };
+  const removedName = evaluation.checklist.criteria[1].name;
+  evaluation.checklist.criteria = [custom];
+  evaluation.checklist.version = 3;
+  evaluation.results = [{ ...structuredClone(evaluation.results[0]), criterionId: custom.id, answer: false, originalAnswer: false, points: 0 }];
+  evaluation.total = 0;
+  evaluation.originalTotal = 0;
+  const bytes = await evaluationWorkbook(demoConversation, evaluation);
+  const book = new ExcelJS.Workbook();
+  await book.xlsx.load(bytes as never);
+  const sheet = book.getWorksheet("Баллы по критериям")!;
+  assert.equal(sheet.rowCount, 2);
+  const cells = JSON.stringify(sheet.getRow(2).values);
+  assert.ok(cells.includes(custom.name));
+  assert.ok(!cells.includes(removedName));
+  assert.equal(book.getWorksheet("Результат")!.getCell("B9").value, 0);
+});

@@ -1,6 +1,5 @@
 import { useId, useState } from "react";
 import { ArrowUpRight, BookOpen, Check, ChevronDown, LoaderCircle } from "lucide-react";
-import "./conversation-improvement.css";
 import type { Evaluation } from "../lib/types";
 
 export default function ConversationImprovement({ evaluation, enabled, busy, onGenerate, onRefresh }: {
@@ -16,7 +15,6 @@ export default function ConversationImprovement({ evaluation, enabled, busy, onG
   const contentId = useId();
   const saved = evaluation.improvement;
   const long = (saved?.text?.length ?? 0) > 480;
-  const customRubric = evaluation.provenance?.promptVersion === "dynamic-checklist-v1";
   return <section className="conversation-improvement" aria-label="Пример правильного подхода">
     <header className="improvement-heading">
       <span className="improvement-icon" aria-hidden="true"><BookOpen size={20} /></span>
@@ -36,7 +34,7 @@ export default function ConversationImprovement({ evaluation, enabled, busy, onG
         </button>}
       </div>
     </> : <>
-      <button type="button" className="improvement-generate" aria-label="Показать пример правильного подхода" aria-busy={pending} disabled={!enabled || customRubric || busy || pending || !!error}
+      <button type="button" className="improvement-generate" aria-label="Показать пример правильного подхода" aria-busy={pending} disabled={!enabled || busy || pending || !!error}
         onClick={async () => {
           setPending(true);
           setError("");
@@ -50,7 +48,6 @@ export default function ConversationImprovement({ evaluation, enabled, busy, onG
       </button>
       {pending && <p className="improvement-note" role="status">Составляем рекомендацию по сохранённому анализу…</p>}
       {!enabled && <p className="improvement-note">Генерация рекомендаций сейчас отключена на сервере.</p>}
-      {customRubric && <p className="improvement-note">Этот пример доступен только для исходного чек-листа. Анализ изменённых правил сохранён; генерация примера для них пока не поддерживается.</p>}
     </>}
     {error && <div className="improvement-error"><p role="alert">{error}</p><button type="button" className="improvement-expand" onClick={() => { onRefresh(); setError(""); }}>Проверить сохранённый результат</button></div>}
     <p className="improvement-footnote">Оценки и доказательства остаются прежними.</p>

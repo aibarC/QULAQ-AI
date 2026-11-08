@@ -1,3 +1,4 @@
+import "./components/conversation-improvement.css";
 import CoachingAdvice from "./components/CoachingAdvice";
 import ManagerDashboard from "./components/ManagerDashboard";
 import MotionSettings from "./components/MotionSettings";

@@ -1,3 +1,4 @@
+import { DYNAMIC_IMPROVEMENT_VERSION, usesCanonicalAnalysis } from "./two-stage-prompts.ts";
 import { LayaError } from "./laya.ts";
 import {
   createServer,
@@ -415,8 +416,6 @@ export function createApp(options: AppOptions): Server {
         const conversation = snapshot.conversations.find(item => item.id === evaluation?.recordId);
         if (!evaluation || !conversation || evaluation.demo || conversation.demo)
           throw new HttpError(404, "NOT_FOUND", "Сохранённый анализ не найден.");
-        if (evaluation.provenance?.promptVersion === "dynamic-checklist-v1")
-          throw new HttpError(422, "UNSUPPORTED_IMPROVEMENT_CHECKLIST", "Пример доступен для исходного чек-листа. Для изменённых правил нужен адаптированный промпт.");
         const assessmentFingerprint = fingerprint(conversation, evaluation);
         if (evaluation.improvement?.assessmentFingerprint === assessmentFingerprint)
           return reply(response, 200, snapshot);
@@ -443,7 +442,7 @@ export function createApp(options: AppOptions): Server {
             const record = draft.conversations.find(item => item.id === current?.recordId);
             if (!current || !record || fingerprint(record, current) !== assessmentFingerprint)
               throw new HttpError(409, "ANALYSIS_CHANGED", "Анализ изменился во время генерации. Пример не сохранён.");
-            current.improvement = { text, assessmentFingerprint, createdAt: new Date().toISOString(), promptVersion: "two-stage-v1/conversation_improvement" };
+            current.improvement = { text, assessmentFingerprint, createdAt: new Date().toISOString(), promptVersion: usesCanonicalAnalysis(evaluation.checklist) ? "two-stage-v1/conversation_improvement" : DYNAMIC_IMPROVEMENT_VERSION };
           });
           return reply(response, 200, workspace);
         } finally {

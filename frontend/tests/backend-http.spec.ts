@@ -580,3 +580,31 @@ test("coaching shows a suggested reply separately from source evidence", async (
   ).toBe(true);
   expect(posts).toBe(0);
 });
+
+test("checklist editor saves additions and deletions for the next analysis", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "enabled-fixture", "Synthetic evaluator only");
+  await page.goto("/");
+  await page.getByRole("button", { name: "Чек-листы", exact: true }).click();
+  await page.getByRole("button", { name: "Добавить критерий", exact: true }).click();
+  await page.getByLabel("Название критерия", { exact: true }).fill("Проверка понимания — тест");
+  await page.getByLabel("Что нужно проверить", { exact: true }).fill("Оператор уточняет, понятен ли клиенту следующий шаг.");
+  await page.getByLabel("Вес критерия", { exact: true }).fill("25");
+  const save = page.getByRole("button", { name: "Сохранить чек-лист", exact: true });
+  await save.click();
+  await expect(save).toBeDisabled();
+  const state = await (await page.request.get("/api/workspace")).json();
+  const added = state.checklists[0];
+  const criterion = added.criteria.find((r: {name: string}) => r.name === "Проверка понимания — тест");
+  expect(criterion.weight).toBe(25);
+  await page.reload();
+  await page.getByRole("button", { name: /Проверка понимания — тест/ }).click();
+  await page.getByRole("button", { name: "Удалить критерий", exact: true }).click();
+  await page.getByRole("button", { name: "Удалить критерий", exact: true }).click();
+  await save.click();
+  await expect(save).toBeDisabled();
+  const final = await (await page.request.get("/api/workspace")).json();
+  expect(final.checklists[0].version).toBe(added.version + 1);
+  expect(final.checklists[0].criteria.some((r: {id: string}) => r.id === criterion.id)).toBe(false);
+  await page.reload();
+  await expect(page.getByRole("button", { name: /Проверка понимания — тест/ })).toHaveCount(0);
+});

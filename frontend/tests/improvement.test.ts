@@ -60,10 +60,10 @@ test("separate recommendation renders disabled state, escaped text and explicit 
   assert.match(render(), /Модель не предложила улучшений/);
 });
 
-test("custom rubric recommendation stays disabled even when gateway is enabled", () => {
+test("custom rubric recommendation is available when gateway is enabled", () => {
   const evaluation = workspace().evaluations[0];
   evaluation.provenance = { promptVersion: "dynamic-checklist-v1", transcriptHash: "a".repeat(64), model: "synthetic" };
   const html = renderToStaticMarkup(createElement(ConversationImprovement, { evaluation, enabled: true, busy: false, onGenerate: async () => {}, onRefresh: () => {} }));
-  assert.match(html, /disabled/);
-  assert.match(html, /только для исходного чек-листа/);
+  assert.doesNotMatch(html, /disabled/);
+  assert.match(html, /Показать пример/);
 });

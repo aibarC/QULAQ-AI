@@ -348,3 +348,30 @@ test("date ranges reject impossible, reversed and oversized input before allocat
   assert.equal(leapYear.dailyTrend.length, MAX_REPORT_DAYS);
   assert.ok(leapYear.dailyTrend.some((day) => day.date === "2028-02-29"));
 });
+
+test("added and deleted criteria flow into latest statistics while historical periods retain their snapshots", () => {
+  const added = structuredClone(checklist);
+  added.version = 2;
+  added.criteria.push({ ...structuredClone(checklist.criteria[0]), id: "next-step", name: "Следующий шаг", weight: 25 });
+  const removed = structuredClone(added);
+  removed.version = 3;
+  removed.criteria = removed.criteria.filter((c) => c.id !== "contact");
+  const original = evaluation("a", "v1", "2026-11-01T10:00:00Z", 70, [false, 10, false]);
+  const afterAdd = evaluation("a", "v2", "2026-11-02T10:00:00Z", 56, [false, 10, false, false], added);
+  const afterDelete = evaluation("a", "v3", "2026-11-03T10:00:00Z", 73.68, [10, false, false], removed);
+  const state = workspace([conversation("a")], [original, afterAdd, afterDelete]);
+  state.checklists = [removed];
+  const before = structuredClone(state);
+  const latest = buildManagerReport(state, november);
+  assert.equal(latest.conversationCount, 1);
+  assert.equal(latest.average, 73.68);
+  assert.equal(latest.dailyTrend.find((d) => d.date === "2026-11-03")?.average, 73.68);
+  assert.deepEqual(latest.violations.map((v) => [v.criterionId, v.checklistVersion, v.eligible]), [["next-step", 3, 1]]);
+  const addedPeriod = buildManagerReport(state, { start: "2026-11-02", end: "2026-11-02" });
+  assert.equal(addedPeriod.average, 56);
+  assert.deepEqual(new Set(addedPeriod.violations.map((v) => v.criterionId)), new Set(["contact", "next-step"]));
+  const historical = buildManagerReport(state, { start: "2026-11-01", end: "2026-11-01" });
+  assert.equal(historical.average, 70);
+  assert.deepEqual(historical.violations.map((v) => v.criterionId), ["contact"]);
+  assert.deepEqual(state, before);
+});

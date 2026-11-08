@@ -406,6 +406,12 @@ export default function ChecklistEditor({
                     )}
                 </span>
               </div>
+              <p className="checklist-change-note">
+                Сохраните изменения перед новым анализом. Добавленные и удалённые критерии,
+                правила и веса применятся к следующему запуску выбранного чек-листа.
+                Прошлые результаты не изменятся. Сумма весов может отличаться от 100:
+                итог нормируется по применимым критериям.
+              </p>
               {errors.criteria && (
                 <div className="error-box" role="alert">
                   <AlertCircle size={17} />
@@ -832,7 +838,7 @@ export default function ChecklistEditor({
                   ) : saved ? (
                     <>
                       <Check size={17} />
-                      Чек-лист сохранён
+                      Чек-лист сохранён · готов к следующей оценке
                     </>
                   ) : (
                     <>

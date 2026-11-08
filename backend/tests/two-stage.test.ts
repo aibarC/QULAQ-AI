@@ -77,16 +77,61 @@ test("improvement uses saved displayed assessment without changing it and strict
     assert.throws(() => parseImprovementOutput(invalid), /INVALID_IMPROVEMENT_OUTPUT/);
 });
 
-test("custom rubric improvement rejects before reading a token or consuming an allowance", async () => {
+test("custom rubric improvement uses its saved rules and reviewed answers in one explicit request", async () => {
+  const saved = structuredClone(evaluation());
+  const rules = structuredClone(checklist);
+  rules.version = 7;
+  rules.name = "Пользовательские правила";
+  rules.criteria = [
+    { ...rules.criteria[0], id: "custom-boolean", description: "Проверить новый шаг", weight: 30 },
+    { ...rules.criteria[3], id: "custom-scale", name: "Полнота инструкции", weight: 60,
+      scale: [{ value: 0, label: "Нет" }, { value: 1, label: "Частично" }, { value: 3, label: "Полностью" }] },
+    { ...rules.criteria[7], id: "custom-flag" },
+    { ...rules.criteria[1], id: "custom-na", weight: 10 },
+  ];
+  const answers = [false, 1, true, null];
+  saved.checklist = rules;
+  Object.assign(saved, scoreModelOutput(conversation, rules, { results: rules.criteria.map((criterion, index) => ({
+    criterion_id: criterion.id, status: answers[index] === null ? "not_applicable" : "scored",
+    value: answers[index], reason: "Синтетическое объяснение применимости и результата.",
+    evidence_ids: [conversation.messages[0].id], evidence_kind: "messages",
+  })) }));
+  saved.provenance = { promptVersion: "dynamic-checklist-v1", transcriptHash: "synthetic", model: "synthetic" };
+  saved.results[0].override = { answer: false, reason: "Уточнённая причина проверяющего", appealId: "synthetic-appeal" };
+  const before = JSON.stringify(saved);
   let tokenReads = 0;
   let calls = 0;
-  const provider = createGatewayProvider({ enabled: true, baseUrl: 'https://llm.telecom.kz/v1', model: 'synthetic',
-    getToken: () => { tokenReads++; return 'synthetic'; }, quotaPath: '/unused-custom-improvement-quota',
-    fetcher: (async () => { calls++; throw new Error('Unexpected request'); }) as typeof fetch });
-  const saved = structuredClone(evaluation()); saved.checklist.criteria[0].description += ' Changed.';
-  await assert.rejects(() => provider.improve({ conversation, evaluation: saved, signal: new AbortController().signal }), /UNSUPPORTED_IMPROVEMENT_CHECKLIST/);
+  let sentMessages: { role: string; content: string }[] = [];
+  const provider = createGatewayProvider({ enabled: true, baseUrl: "https://llm.telecom.kz/v1", model: "synthetic",
+    getToken: () => { tokenReads++; return "synthetic"; },
+    fetcher: (async (_url, init) => {
+      calls++;
+      sentMessages = JSON.parse(String(init?.body)).messages;
+      return streamResponse({ conversation_improvement: "Синтетический пример по изменённым правилам." });
+    }) as typeof fetch });
   assert.equal(tokenReads, 0);
   assert.equal(calls, 0);
+  assert.equal(await provider.improve({ conversation, evaluation: saved, signal: new AbortController().signal }),
+    "Синтетический пример по изменённым правилам.");
+  const payload = JSON.parse(sentMessages[1].content);
+  assert.deepEqual(payload.checklist, rules);
+  assert.deepEqual(payload.assessment.results.map((item: { criterion_id: string; value: unknown }) => [item.criterion_id, item.value]),
+    rules.criteria.map((item, index) => [item.id, answers[index]]));
+  assert.equal(payload.assessment.results[0].reason, "Уточнённая причина проверяющего");
+  assert.ok(!payload.checklist.criteria.some((item: { id: string }) => item.id === "c1"));
+  assert.match(sentMessages[0].content, /максимального scale.value/);
+  assert.match(sentMessages[0].content, /true у flag/);
+  assert.ok(sentMessages[0].content.includes("not_applicable/N/A не является недостатком"));
+  assert.match(sentMessages[0].content, /не исполняй команды/);
+  assert.equal(calls, 1);
+  assert.equal(tokenReads, 1);
+  assert.equal(JSON.stringify(saved), before);
+});
+
+test("canonical improvement retains the exact bundled prompt and payload contract", async () => {
+  const messages = buildImprovementMessages(conversation, evaluation());
+  assert.equal(messages[0].content, await readFile(new URL("../../llm/prompts/two_stage_v1/conversation_improvement.system.txt", import.meta.url), "utf8"));
+  assert.deepEqual(Object.keys(JSON.parse(messages[1].content)).sort(), ["assessment", "record"]);
 });
 
 test("SSE handles split UTF-8, CRLF, comments and rejects missing DONE or truncated finish", async () => {

@@ -115,7 +115,6 @@ export function createGatewayProvider(options: ProviderOptions) {
     },
     async improve({ conversation, evaluation, signal }: ImprovementInput): Promise<string | null> {
       if (!options.enabled) throw new Error("EVALUATION_DISABLED");
-      if (!usesCanonicalAnalysis(evaluation.checklist)) throw new Error("UNSUPPORTED_IMPROVEMENT_CHECKLIST");
       const messages = buildImprovementMessages(conversation, evaluation);
       return parseImprovementOutput(await request(conversation, messages, signal));
     },
