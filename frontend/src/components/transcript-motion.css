@@ -212,7 +212,7 @@ html[data-motion="off"] .message-meta .message-time {
 
 .transcript-panel .audio-panel {
   background: linear-gradient(135deg, #f5efff, #faf8ff);
-  border: 1px solid #ded0f1;
+  border: 1px solid #b8adca;
   border-radius: 16px;
   padding: 16px;
 }
@@ -293,7 +293,7 @@ html[data-motion="off"] .message-meta .message-time {
   background: #e8dbfa;
 }
 .voice-options select {
-  border: 1px solid #dac8ef;
+  border: 1px solid #b5a7c9;
   border-radius: 8px;
   background: #fff;
   color: #4c237a;
